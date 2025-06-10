@@ -11,9 +11,6 @@ Example usage:
     
 Resume from checkpoint:
     python magic_baseline.py --path /path/to/data.lmdb --resume-from-checkpoint /path/to/checkpoint.ckpt
-    
-Auto-resume from latest checkpoint:
-    python magic_baseline.py --path /path/to/data.lmdb --auto-resume
 
 Evaluate only (no training):
     python magic_baseline.py --path /path/to/data.lmdb --eval-only --checkpoint /path/to/model.pth
@@ -25,9 +22,6 @@ warnings.filterwarnings("ignore")
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 
 import torch
 from torch import Tensor
@@ -51,6 +45,12 @@ from graphnet.utilities.argparse import ArgumentParser
 from graphnet.utilities.logging import Logger
 from graphnet.data import GraphNeTDataModule
 from graphnet.data.dataset.lmdb import MAGICLMDBDataset
+
+# Import our evaluation utilities
+from magic_evaluation_utils import (
+    evaluate_magic_results_comprehensive,
+    print_magic_summary
+)
 
 # Constants
 features = FEATURES.MAGIC
@@ -186,104 +186,12 @@ def setup_data(data_path, batch_size, num_workers):
     return dm
 
 
-def evaluate_results(results_df, output_dir, logger):
-    """Quick evaluation of results."""
-    logger.info("Evaluating results...")
-    
-    # Classification metrics
-    y_true = results_df['particle_id'].values
-    y_prob = results_df['gamma_prob'].values  # Use named prediction
-    y_pred = (y_prob > 0.5).astype(int)
-    
-    accuracy = accuracy_score(y_true, y_pred)
-    auc = roc_auc_score(y_true, y_prob)
-    
-    # Energy metrics (gamma events only)
-    gamma_mask = results_df['particle_id'] == 0
-    if gamma_mask.sum() > 0:
-        df_gamma = results_df[gamma_mask]
-        y_true_energy = df_gamma['true_energy'].values
-        y_pred_energy = df_gamma['energy_pred'].values  # Use named prediction
-        
-        energy_mae = float(np.mean(np.abs(y_pred_energy - y_true_energy)))
-        energy_bias = float(np.mean((y_pred_energy - y_true_energy) / (y_true_energy + 1e-8)))
-    else:
-        energy_mae = energy_bias = 0
-        
-    # Direction metrics (gamma events only)
-    if gamma_mask.sum() > 0:
-        theta_true = df_gamma['true_theta'].values
-        phi_true = df_gamma['true_phi'].values
-        theta_pred = df_gamma['theta_pred'].values  # Use named prediction
-        phi_pred = df_gamma['phi_pred'].values      # Use named prediction
-        
-        # Angular distance calculation
-        x1 = np.sin(theta_true) * np.cos(phi_true)
-        y1 = np.sin(theta_true) * np.sin(phi_true)
-        z1 = np.cos(theta_true)
-        
-        x2 = np.sin(theta_pred) * np.cos(phi_pred)
-        y2 = np.sin(theta_pred) * np.sin(phi_pred)
-        z2 = np.cos(theta_pred)
-        
-        dot_product = np.clip(x1*x2 + y1*y2 + z1*z2, -1, 1)
-        angular_dist_deg = np.degrees(np.arccos(dot_product))
-        
-        mean_angular_error = float(np.mean(angular_dist_deg))
-        angular_resolution_68 = float(np.percentile(angular_dist_deg, 68))
-    else:
-        mean_angular_error = angular_resolution_68 = 0
-    
-    # Simple plots
-    plt.style.use('default')
-    
-    # ROC curve
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    plt.figure(figsize=(8, 6))
-    plt.plot(fpr, tpr, label=f'AUC = {auc:.3f}', linewidth=2)
-    plt.plot([0, 1], [0, 1], 'k--', label='Random')
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Gamma vs Proton Classification')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f'{output_dir}/roc_curve.png', dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # Energy correlation (if gamma events exist)
-    if gamma_mask.sum() > 0:
-        plt.figure(figsize=(8, 6))
-        plt.scatter(y_true_energy, y_pred_energy, alpha=0.6, s=20)
-        plt.plot([y_true_energy.min(), y_true_energy.max()], 
-                 [y_true_energy.min(), y_true_energy.max()], 'r--')
-        plt.xlabel('True Energy')
-        plt.ylabel('Predicted Energy')
-        plt.title('Energy Reconstruction')
-        plt.grid(True, alpha=0.3)
-        plt.savefig(f'{output_dir}/energy_correlation.png', dpi=150, bbox_inches='tight')
-        plt.close()
-    
-    # Print summary
-    print("\n" + "="*50)
-    print("MAGIC BASELINE GNN RESULTS")
-    print("="*50)
-    print(f"📊 CLASSIFICATION:")
-    print(f"   • AUC: {auc:.4f}")
-    print(f"   • Accuracy: {accuracy:.4f}")
-    print(f"   • Total events: {len(results_df)}")
-    
-    if gamma_mask.sum() > 0:
-        print(f"\n⚡ ENERGY (Gamma events only):")
-        print(f"   • MAE: {energy_mae:.4f}")
-        print(f"   • Relative bias: {energy_bias*100:.2f}%")
-        print(f"   • Gamma events: {gamma_mask.sum()}")
-        
-        print(f"\n🎯 DIRECTION (Gamma events only):")
-        print(f"   • Mean angular error: {mean_angular_error:.2f}°")
-        print(f"   • 68% containment: {angular_resolution_68:.2f}°")
-    
-    print(f"\n📁 Plots saved: roc_curve.png, energy_correlation.png")
-    print("="*50)
+
+def evaluate_results(results_df, output_dir, logger, data_path, limits_file=None):
+    """Evaluate results using comprehensive evaluation from magic_evaluation_utils."""
+    return evaluate_magic_results_comprehensive(
+        results_df, data_path, output_dir, logger, limits_file
+    )
 
 
 def main():
@@ -292,6 +200,7 @@ def main():
     
     parser.add_argument("--path", required=True, help="Path to LMDB dataset")
     parser.add_argument("--output-dir", default="./magic_baseline_results", help="Output directory")
+    parser.add_argument("--limits-file", type=str, help="Path to preprocessing limits file (optional - will auto-search in data directory)")
     parser.add_argument("--resume-from-checkpoint", type=str, help="Path to checkpoint to resume from")
     # parser.add_argument("--auto-resume", action="store_true", help="Automatically find and resume from latest checkpoint")
     parser.add_argument("--wandb-run-id", type=str, help="W&B run ID to resume (if resuming a W&B logged run)")
@@ -324,6 +233,16 @@ def main():
     if args.eval_only and not os.path.exists(args.checkpoint):
         logger.error(f"❌ Checkpoint file not found: {args.checkpoint}")
         return
+    
+    # Check limits file and auto-search info
+    if args.limits_file and not os.path.exists(args.limits_file):
+        logger.warning(f"⚠️  Specified limits file not found: {args.limits_file}")
+        logger.info("Will auto-search in data directory instead...")
+    elif args.limits_file:
+        logger.info(f"📄 Using explicit limits file: {args.limits_file}")
+    else:
+        logger.info(f"🔍 Will auto-search for preprocessing limits in: {args.path}")
+        logger.info("   (Looking for: preprocessing_limits.pkl, limits.pkl, etc.)")
     
     # Handle checkpoint resumption
     checkpoint_path = None
@@ -453,8 +372,8 @@ def main():
             results.to_csv(f"{args.output_dir}/results_{split_name}.csv", index=False)
             logger.info(f"💾 Evaluation results saved to: results_{split_name}.csv")
             
-            # Evaluate
-            evaluate_results(results, args.output_dir, logger)
+            # Evaluate with transforms
+            evaluate_results(results, args.output_dir, logger, args.path, args.limits_file)
             
             logger.info(f"✅ Evaluation complete! Results in: {args.output_dir}")
             
@@ -494,8 +413,8 @@ def main():
             )
             results.to_csv(f"{args.output_dir}/results.csv", index=False)
             
-            # Evaluate
-            evaluate_results(results, args.output_dir, logger)
+            # Evaluate with transforms
+            evaluate_results(results, args.output_dir, logger, args.path, args.limits_file)
             
             logger.info(f"✅ Done! Results in: {args.output_dir}")
         
@@ -506,3 +425,4 @@ def main():
 
 if __name__ == "__main__":
     main() 
+ 
