@@ -7,6 +7,11 @@ if has_torch_package():
     from .dataset import EnsembleDataset, Dataset, ColumnMissingException
     from .parquet.parquet_dataset import ParquetDataset
     from .sqlite.sqlite_dataset import SQLiteDataset
+    
+    try:
+        from .lmdb.lmdb_dataset import LMDBDataset
+    except ImportError:
+        LMDBDataset = None
 
     torch.multiprocessing.set_sharing_strategy("file_system")
 
