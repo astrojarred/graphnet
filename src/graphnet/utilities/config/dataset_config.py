@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 BACKEND_LOOKUP = {
     "db": "sqlite",
     "parquet": "parquet",
+    "lmdb": "lmdb",
 }
 
 
@@ -150,10 +151,12 @@ class DatasetConfig(BaseConfig):
         """Return the `Dataset` class implementation for this configuration."""
         from graphnet.data.dataset.sqlite import SQLiteDataset
         from graphnet.data.dataset.parquet import ParquetDataset
+        from graphnet.data.dataset.lmdb import LMDBDataset
 
         dataset_class = {
             "sqlite": SQLiteDataset,
             "parquet": ParquetDataset,
+            "lmdb": LMDBDataset,
         }[self._backend]
 
         return dataset_class
