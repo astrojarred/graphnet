@@ -44,9 +44,9 @@ class LMDBDataset(Dataset):
             transform: Optional transform to apply to each Data object (e.g., UnpackGlobalFeatures).
             **kwargs: Additional arguments passed to base class.
         """
-        # Import here to avoid circular imports
-        from graphnet.models.graphs import KNNGraph
-        from graphnet.models.detector.magic import MAGICDetector
+
+        if not Path(path).exists():
+            raise FileNotFoundError(f"LMDB database not found at {path}")
 
         # Convert Path object to string for DatasetConfig validation
         path = str(path)
@@ -60,10 +60,7 @@ class LMDBDataset(Dataset):
         # Create a dummy graph definition if none provided
         # Since we work with pre-built Data objects, this won't actually be used
         if graph_definition is None:
-            graph_definition = KNNGraph(
-                detector=MAGICDetector(),
-                nb_nearest_neighbours=8,
-            )
+            raise ValueError("graph_definition is required for LMDBDataset")
 
         # Store transform for later use
         self._transform = transform
@@ -79,6 +76,11 @@ class LMDBDataset(Dataset):
             selection=selection,
             **kwargs,
         )
+
+        self._event_id_to_idx = {}
+        self._idx_to_event_id = {}
+        self._all_indices = self._get_all_indices()
+        self._selection = selection
 
     @classmethod
     def _resolve_graphnet_paths(
@@ -111,9 +113,6 @@ class LMDBDataset(Dataset):
 
         # LMDB environment (will be lazily initialized)
         self._env: Optional[lmdb.Environment] = None
-
-        # Cache for indices to avoid repeated expensive scans
-        self._cached_indices: Optional[List[int]] = None
 
     def _post_init(self) -> None:
         # Override to skip column checking since we work with pre-built Data objects
@@ -161,17 +160,45 @@ class LMDBDataset(Dataset):
         columns: Union[List[str], str],
         sequential_index: Optional[int] = None,
         selection: Optional[str] = None,
+        max_length: Optional[int] = None,
+    ) -> np.ndarray:
+        """Query table - simplified for pre-stored Data objects."""
+
+        if isinstance(columns, str):
+            columns = [columns]
+
+        if sequential_index is None:
+            indices = np.arange(0, len(self) if max_length is None else max_length, 1)
+        else:
+            indices = [sequential_index]
+
+        arrays = []
+        for idx in indices:
+            array = self._query_table(table, columns, idx, selection)
+            arrays.append(array)
+
+        return np.concatenate(arrays, axis=0)
+
+    def _query_table(
+        self,
+        table: str,
+        columns: Union[List[str], str],
+        sequential_index: Optional[int] = None,
+        selection: Optional[str] = None,
+        _ignore_selection: bool = False,
     ) -> np.ndarray:
         """Query table - simplified for pre-stored Data objects."""
 
         if sequential_index is None:
-            print("sequential_index is None")
             return None
 
         if isinstance(columns, str):
             columns = [columns]
 
-        data = self.get_data(sequential_index)
+        if self._selection is not None and not _ignore_selection:
+            pass
+
+        data = self.get_data(sequential_index, _ignore_selection=_ignore_selection)
 
         for col in columns:
             if not hasattr(data, col):
@@ -198,10 +225,18 @@ class LMDBDataset(Dataset):
                 attr_data = attr_data.detach().cpu().numpy()
             elif hasattr(attr_data, 'cpu'):
                 attr_data = attr_data.cpu().numpy()
+            elif not isinstance(attr_data, np.ndarray):
+                attr_data = np.array(attr_data)
+            
+            # Ensure numeric types for columns that should be numeric (like event_id)
+            if col == self._index_column and attr_data.dtype == object:
+                attr_data = attr_data.astype(np.int64)
 
             column_data.append(attr_data)
         
-        return np.array(column_data).T
+        # Use appropriate dtype inference
+        result = np.column_stack(column_data) if column_data else np.array([]).reshape(0, len(columns))
+        return result
 
     def _query(
         self, sequential_index: int
@@ -242,13 +277,26 @@ class LMDBDataset(Dataset):
 
     def _get_all_indices(self) -> List[int]:
         """Return a list of all unique event indices in the database."""
-        # Return cached result if available
-        if self._cached_indices is not None:
-            return self._cached_indices
+
+        # first check if database as a map
+        map_path = Path(self._path) / "idx_eventid_map.pkl"
+        if map_path.exists():
+            import pickle
+            with open(map_path, "rb") as f:
+                mapping = pickle.load(f)
+            if "event_id_to_idx" in mapping:
+                self.debug(f"Using cached indices from {map_path}")
+                self._event_id_to_idx = mapping["event_id_to_idx"]
+                self._idx_to_event_id = mapping["idx_to_event_id"]
+                return list(mapping["event_id_to_idx"].keys())
+            else:
+                self.warning("Mapping file does not contain event_id_to_idx... recreating")
 
         self._lazy_connect()
 
         indices = []
+        event_id_to_idx = {}
+        idx_to_event_id = {}
 
         try:
             with self._env.begin() as txn:
@@ -256,8 +304,18 @@ class LMDBDataset(Dataset):
                 for key_bytes, _ in cursor:
                     try:
                         # Assume keys are simple integers
+                        # get the value of the index_column
                         index = int(key_bytes.decode("utf-8"))
-                        indices.append(index)
+                        event_id = self._query_table(
+                            table="",
+                            columns=[self._index_column],
+                            sequential_index=index,
+                            _ignore_selection=True,
+                        )
+                        event_id = event_id.flatten()[0]
+                        indices.append(event_id)
+                        event_id_to_idx[event_id] = index
+                        idx_to_event_id[index] = event_id
                     except (ValueError, UnicodeDecodeError):
                         # Skip malformed keys
                         continue
@@ -265,42 +323,43 @@ class LMDBDataset(Dataset):
         except lmdb.Error as e:
             raise RuntimeError(f"LMDB error getting indices: {e}")
 
-        # Cache the result for future calls
-        self._cached_indices = sorted(indices)
-        return self._cached_indices
+        self._event_id_to_idx = event_id_to_idx
+        self._idx_to_event_id = idx_to_event_id
 
-    def _get_event_index(self, sequential_index: Optional[int]) -> int:
+        return indices
+
+    def _get_event_index(self, sequential_index: int) -> int:
         """Return the event index corresponding to a sequential index."""
-        if sequential_index is None:
-            return 0
-
         # For this dataset, we assume indices are the actual keys
-        if isinstance(self._indices[sequential_index], int):
-            return self._indices[sequential_index]
-        else:
-            return int(self._indices[sequential_index])
+        return self._idx_to_event_id[sequential_index]
 
-    def get_data(self, sequential_index: int) -> Data:
+    def get_data(self, sequential_index: int, _ignore_selection: bool = False) -> Data:
         """Return graph `Data` object at `index`."""
-        if not (0 <= sequential_index < len(self)):
+        if not (0 <= sequential_index < len(self)) and not _ignore_selection:
             raise IndexError(
                 f"Index {sequential_index} not in range [0, {len(self) - 1}]"
             )
 
-        # Get the actual event index
-        event_index = self._get_event_index(sequential_index)
+        # update key if there is a selection criteria
+        if self._selection is not None:
+            # get the event_id at that position in _indices
+            event_id = self._indices[sequential_index]
+            # get the og sequential index from _event_id_to_idx
+            effective_sequential_index = self._event_id_to_idx[event_id]
+        else:
+            effective_sequential_index = sequential_index
 
         # Connect to database
         self._lazy_connect()
 
         # Create key for this event
-        key = str(event_index).encode("utf-8")
+        key = str(effective_sequential_index).encode("utf-8")
 
         try:
             with self._env.begin() as txn:
                 serialized_data = txn.get(key)
                 if serialized_data is None:
-                    raise IndexError(f"No data found for event {event_index}")
+                    raise IndexError(f"No data found for event {sequential_index}")
 
                 # Deserialize the Data object
                 data = self._deserialize(serialized_data)
@@ -329,7 +388,7 @@ class LMDBDataset(Dataset):
                 return data
 
         except lmdb.Error as e:
-            raise RuntimeError(f"LMDB error reading event {event_index}: {e}")
+            raise RuntimeError(f"LMDB error reading event {key}: {e}")
 
     def _create_graph(
         self,
@@ -354,7 +413,6 @@ class LMDBDataset(Dataset):
         if len(truth.shape) == 1:
             truth = truth.reshape(1, -1)
         truth_dict = {key: truth[:, index] for index, key in enumerate(self._truth)}
-
         # Define custom labels
         labels_dict = self._get_labels(truth_dict)
 
@@ -435,6 +493,11 @@ class LMDBDataset(Dataset):
             self._index_column: truth_dict[self._index_column],
         }
         return labels_dict
+
+    def __len__(self) -> int:
+        if not hasattr(self, "_indices"):
+            self._indices = self._get_all_indices()
+        return len(self._indices)
 
     # Custom pickling methods to handle multiprocessing
     def __getstate__(self):
