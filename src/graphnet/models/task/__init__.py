@@ -6,3 +6,18 @@ from .task import (
     StandardLearnedTask,
     StandardFlowTask,
 )
+
+from .reconstruction import (
+    MAGICDirectionClassificationTask,
+    DirectionReconstructionWithKappa,
+    AzimuthReconstructionWithKappa,
+    ZenithReconstructionWithKappa,
+    EnergyReconstruction,
+)
+
+from .magic_reconstruction import (
+    MAGICDirectionReconstructionVMF,
+    MAGICDirectionClassification,
+    MAGICHybridDirectionTask,
+    MAGICAngularResolution,
+)
