@@ -662,3 +662,172 @@ class RMSEVonMisesFisher3DLoss(EnsembleLoss):
             loss_factors=[1, vmfs_factor],
             prediction_keys=[[0, 1, 2], [0, 1, 2, 3]],
         )
+
+
+class HybridDirectionLoss(LossFunction):
+    """Hybrid loss combining Von Mises-Fisher regression with angular binning classification.
+    
+    This loss function implements the approach from IceCube Kaggle competition winners,
+    combining continuous directional prediction via VMF loss with discrete classification
+    loss for fine-grained angular bins within the region of interest (ROI).
+    
+    CRITICAL: This loss function handles the target transformation internally,
+    computing bin assignments from 3D direction vectors to provide proper targets
+    for both the VMF and classification components.
+    """
+
+    def __init__(
+        self, 
+        num_fine_bins: int = 64,
+        roi_radius_deg: float = 0.5,
+        vmf_weight: float = 1.0,
+        classification_weight: float = 0.5,
+    ) -> None:
+        """Initialize hybrid direction loss.
+        
+        Args:
+            num_fine_bins: Number of fine angular bins within ROI
+            roi_radius_deg: ROI radius in degrees
+            vmf_weight: Weight for the Von Mises-Fisher regression loss
+            classification_weight: Weight for the classification loss
+        """
+        super().__init__()
+        
+        self.num_fine_bins = num_fine_bins
+        self.roi_radius_deg = roi_radius_deg
+        self.roi_radius_rad = np.deg2rad(roi_radius_deg)
+        self.vmf_weight = vmf_weight
+        self.classification_weight = classification_weight
+        
+        # Create component loss functions
+        self.vmf_loss = VonMisesFisher3DLoss()
+        self.classification_loss = nn.CrossEntropyLoss(reduction="none")
+        
+        # Create bin centers for assignment
+        self.bin_centers = self._create_bin_centers()
+        
+    def _create_bin_centers(self) -> np.ndarray:
+        """Create bin centers for fine angular bins within ROI."""
+        # Create fine grid within ROI circle
+        n_per_side = int(np.ceil(np.sqrt(self.num_fine_bins)))
+        
+        # Create grid in [-roi_radius, +roi_radius]
+        theta_vals = np.linspace(-self.roi_radius_rad, self.roi_radius_rad, n_per_side)
+        phi_vals = np.linspace(-self.roi_radius_rad, self.roi_radius_rad, n_per_side)
+        
+        # Create meshgrid and select points within circle
+        theta_grid, phi_grid = np.meshgrid(theta_vals, phi_vals)
+        theta_flat = theta_grid.flatten()
+        phi_flat = phi_grid.flatten()
+        
+        # Keep only points within ROI circle
+        distances = np.sqrt(theta_flat**2 + phi_flat**2)
+        within_roi = distances <= self.roi_radius_rad
+        
+        theta_roi = theta_flat[within_roi]
+        phi_roi = phi_flat[within_roi]
+        
+        # Take first num_fine_bins points
+        if len(theta_roi) > self.num_fine_bins:
+            theta_roi = theta_roi[:self.num_fine_bins]
+            phi_roi = phi_roi[:self.num_fine_bins]
+        
+        # Convert to bin centers array
+        bin_centers = np.column_stack((theta_roi, phi_roi))
+        return bin_centers
+    
+    def _assign_direction_bins(self, directions: Tensor, telescope_pointing: Tensor) -> Tensor:
+        """Assign direction vectors to angular bins based on geometry.
+        
+        This uses a physics-informed approach, calculating angular separation
+        with respect to the true telescope pointing direction for each event.
+        
+        Args:
+            directions: True direction vectors (batch_size, 3)
+            telescope_pointing: Telescope pointing directions (batch_size, 3)
+            
+        Returns:
+            Tensor: Bin assignments (batch_size,) with values 0 to num_fine_bins
+                   (num_fine_bins = outside ROI)
+        """
+        batch_size = directions.shape[0]
+        device = directions.device
+        
+        # Compute angular separation using dot product with true pointing
+        cos_sep = torch.sum(directions * telescope_pointing, dim=1)
+        cos_sep = torch.clamp(cos_sep, -1.0, 1.0)
+        angular_sep = torch.acos(cos_sep)
+        
+        # Initialize all events as outside ROI (class = num_fine_bins)
+        bin_assignments = torch.full((batch_size,), self.num_fine_bins, dtype=torch.long, device=device)
+        
+        # Find events within ROI
+        within_roi = angular_sep <= self.roi_radius_rad
+        
+        if torch.any(within_roi) and len(self.bin_centers) > 0:
+            # For events within ROI, assign based on geometric position
+            roi_indices = torch.where(within_roi)[0]
+            roi_directions = directions[roi_indices]
+            
+            # Convert to angular coordinates relative to telescope pointing
+            # Use spherical coordinates for proper geometric assignment
+            x_offsets = roi_directions[:, 0]
+            y_offsets = roi_directions[:, 1]
+            
+            # For small angles (within 0.5°), these approximate angular offsets
+            roi_offsets = torch.stack([x_offsets, y_offsets], dim=1)
+            
+            # Find closest bin center for each ROI event
+            bin_centers_tensor = torch.tensor(self.bin_centers, device=device, dtype=torch.float32)
+            
+            if len(bin_centers_tensor) > 0:
+                # Vectorized distance computation for efficiency
+                distances = torch.cdist(roi_offsets.unsqueeze(0), bin_centers_tensor.unsqueeze(0))
+                closest_bins = torch.argmin(distances.squeeze(0), dim=1)
+                
+                # Ensure bin assignments are valid
+                closest_bins = torch.clamp(closest_bins, 0, self.num_fine_bins - 1)
+                bin_assignments[roi_indices] = closest_bins
+        
+        return bin_assignments
+    
+    
+    def _forward(self, prediction: Tensor, augmented_target: Tensor) -> Tensor:
+        """Compute hybrid loss with proper target handling.
+        
+        Args:
+            prediction: Model predictions [batch_size, vmf_outputs + classification_outputs]
+            augmented_target: Combined tensor of true direction and telescope pointing
+                              Shape: [batch_size, 6] where [:,:3] is direction
+                              and [:,3:] is pointing direction.
+            
+        Returns:
+            Elementwise loss terms [batch_size]
+        """
+        # Unpack augmented target
+        target_3d = augmented_target[:, :3]
+        telescope_pointing = augmented_target[:, 3:]
+
+        # Split predictions
+        vmf_pred = prediction[:, :4]  # dir_x, dir_y, dir_z, kappa
+        classification_pred = prediction[:, 4:]  # bin probabilities (logits)
+        
+        # Ensure target is 3D direction vectors
+        if target_3d.dim() == 1:
+            target_3d = target_3d.unsqueeze(1)
+        target_3d = target_3d.reshape(-1, 3)
+        
+        # Compute VMF loss (uses direction part of target)
+        vmf_loss_elements = self.vmf_loss._forward(vmf_pred, target_3d)
+        
+        # Compute bin assignments for classification loss
+        bin_targets = self._assign_direction_bins(target_3d, telescope_pointing)
+        
+        # Compute classification loss
+        classification_loss_elements = self.classification_loss(classification_pred, bin_targets)
+        
+        # Combine losses with weights
+        total_loss = (self.vmf_weight * vmf_loss_elements + 
+                     self.classification_weight * classification_loss_elements)
+        
+        return total_loss

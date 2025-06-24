@@ -233,237 +233,150 @@ class InelasticityReconstruction(StandardLearnedTask):
         return torch.sigmoid(x)
 
 
-class MAGICDirectionClassificationTask(StandardLearnedTask):
-    """MAGIC direction reconstruction using quantile-binned classification.
+class HybridDirectionTask(StandardLearnedTask):
+    """Hybrid direction reconstruction combining VMF regression with angular binning classification.
     
-    Based on IceCube Kaggle winning approaches. Converts continuous angle
-    regression into classification over quantile-based bins.
+    This task implements a multi-head approach that outputs both:
+    1. Von Mises-Fisher (VMF) parameters for continuous direction prediction
+    2. Classification probabilities for fine-grained angular bins within region of interest (ROI)
+    
+    The approach is inspired by IceCube Kaggle competition winners who combined
+    continuous regression with discrete classification for improved precision.
     """
     
-    default_target_labels = ["true_phi", "true_theta"]  # MAGIC truth labels
-    default_prediction_labels = ["azimuth_pred", "zenith_pred"]
-    
+    # Default to 68 total outputs (4 VMF + 64 bins + 1 outside ROI)
+    nb_inputs = 69
+    default_target_labels = ["direction"]
+    default_prediction_labels = [
+        "dir_x_pred", "dir_y_pred", "dir_z_pred", "direction_kappa",
+        "bin_probs"
+    ]
+
     def __init__(
         self,
         hidden_size: int,
-        num_azimuth_bins: int = 48,
-        num_zenith_bins: int = 48,
-        **kwargs
+        num_fine_bins: int = 64,
+        roi_radius_deg: float = 0.5,
+        **kwargs,
     ):
-        """Initialize classification task.
+        """Initialize hybrid direction task.
         
         Args:
-            hidden_size: Size of input features from backbone
-            num_azimuth_bins: Number of azimuth angle bins (0-2π)
-            num_zenith_bins: Number of zenith angle bins (0-π)
+            hidden_size: Size of backbone output
+            num_fine_bins: Number of fine angular bins within ROI
+            roi_radius_deg: Radius of region of interest in degrees
+            **kwargs: Additional arguments for StandardLearnedTask
         """
-        self.num_azimuth_bins = num_azimuth_bins
-        self.num_zenith_bins = num_zenith_bins
+        self.num_fine_bins = num_fine_bins
+        self.roi_radius_deg = roi_radius_deg
+        self.roi_radius_rad = np.deg2rad(roi_radius_deg)
         
-        # Set inference transform to convert logits to angles
-        if 'transform_inference' not in kwargs:
-            kwargs['transform_inference'] = self._transform_logits_to_angles
+        # Override nb_inputs based on actual number of bins
+        self.nb_inputs = 4 + num_fine_bins + 1  # VMF + fine bins + outside ROI
         
-        # Parent will create: self._affine = Linear(hidden_size, self.nb_inputs)
-        # where self.nb_inputs tells it how many outputs to create
-        super().__init__(
-            hidden_size=hidden_size,
-            **kwargs
-        )
+        super().__init__(hidden_size=hidden_size, **kwargs)
         
-        # Load quantile bins AFTER calling super() so buffers can be registered
-        self._load_magic_directions()
+        # Create bin centers for fine bins within ROI
+        self.bin_centers = self._create_bin_centers()
     
-    @property
-    def nb_inputs(self) -> int:
-        """Return number of logits the affine layer should output."""
-        return self.num_azimuth_bins + self.num_zenith_bins
-    
-    def _load_magic_directions(self):
-        """Load MAGIC direction data to compute quantile bins.
+    def _create_bin_centers(self):
+        """Create bin centers for fine angular bins within ROI.
         
-        This is THE critical component for IceCube-style performance.
-        Quantile binning allocates model capacity efficiently.
+        Returns:
+            Tensor: Bin centers as (theta, phi) pairs in radians
         """
-        import numpy as np
+        # Create fine grid within ROI circle
+        # Use approximately square grid with slight over-sampling
+        n_per_side = int(np.ceil(np.sqrt(self.num_fine_bins)))
         
-        # Try to load training data for quantile computation
-        train_data_path = "/mnt/scratch/jarred/LMDB_75k_cleaned_nonstd/za05to35.lmdb"
+        # Create grid in [-roi_radius, +roi_radius]
+        theta_vals = np.linspace(-self.roi_radius_rad, self.roi_radius_rad, n_per_side)
+        phi_vals = np.linspace(-self.roi_radius_rad, self.roi_radius_rad, n_per_side)
         
-        try:
-            print(f"Loading training data from {train_data_path} for quantile binning...")
-            
-            # Import LMDB dataset tools
-            from graphnet.data.dataset.lmdb.lmdb_dataset import LMDBDataset
-            
-            # Create temporary dataset to load truth data
-            temp_dataset = LMDBDataset(
-                path=train_data_path,
-                pulsemaps=["total"],
-                features=["x_cam", "y_cam", "t", "tel_id", "signal", "telescope_phi", "telescope_theta"],
-                truth=["particle_id", "true_energy", "true_theta", "true_phi"],
-                selection="event_id % 10 > 1",  # Training data only
-                index_column="event_id",
-                truth_table="truth"
-            )
-            
-            print(f"Loading {len(temp_dataset)} training events for quantile computation...")
-            
-            # Extract all truth values for quantile computation
-            all_azimuth = []
-            all_zenith = []
-            
-            # Sample a subset for faster quantile computation (10k events should be enough)
-            import random
-            sample_size = min(10000, len(temp_dataset))
-            sample_indices = random.sample(range(len(temp_dataset)), sample_size)
-            
-            for i, idx in enumerate(sample_indices):
-                if i % 1000 == 0:
-                    print(f"  Loading sample {i+1}/{sample_size}...")
-                    
-                try:
-                    graph = temp_dataset[idx]
-                    # Extract truth from graph object - check multiple possible attribute names
-                    azimuth_val = None
-                    zenith_val = None
-                    
-                    # Try different possible attribute names
-                    for az_attr in ['true_phi', 'azimuth', 'phi']:
-                        if hasattr(graph, az_attr):
-                            azimuth_val = getattr(graph, az_attr)
-                            break
-                    
-                    for zen_attr in ['true_theta', 'zenith', 'theta']:
-                        if hasattr(graph, zen_attr):
-                            zenith_val = getattr(graph, zen_attr)
-                            break
-                    
-                    if azimuth_val is not None and zenith_val is not None:
-                        # Convert to float and validate ranges
-                        az_float = float(azimuth_val)
-                        zen_float = float(zenith_val)
-                        
-                        # Validate ranges (azimuth: 0-2π, zenith: 0-π)
-                        if 0 <= az_float <= 2*np.pi and 0 <= zen_float <= np.pi:
-                            all_azimuth.append(az_float)
-                            all_zenith.append(zen_float)
-                        
-                except Exception as e:
-                    # Skip problematic samples
-                    continue
-            
-            all_azimuth = np.array(all_azimuth)
-            all_zenith = np.array(all_zenith)
-            
-            print(f"Loaded {len(all_azimuth)} direction samples")
-            
-            # Validate we have enough samples for quantile computation
-            min_samples_needed = max(self.num_azimuth_bins, self.num_zenith_bins) * 10
-            if len(all_azimuth) < min_samples_needed:
-                raise ValueError(f"Need at least {min_samples_needed} samples for quantile binning, got {len(all_azimuth)}")
-            
-            print(f"Azimuth range: [{all_azimuth.min():.3f}, {all_azimuth.max():.3f}] rad")
-            print(f"Zenith range: [{all_zenith.min():.3f}, {all_zenith.max():.3f}] rad")
-            
-            # Compute quantile-based bins (THE SECRET SAUCE!)
-            azimuth_quantiles = np.linspace(0, 1, self.num_azimuth_bins + 1)
-            zenith_quantiles = np.linspace(0, 1, self.num_zenith_bins + 1)
-            
-            self.azimuth_bins = np.quantile(all_azimuth, azimuth_quantiles)
-            self.zenith_bins = np.quantile(all_zenith, zenith_quantiles)
-            
-            # Calculate bin centers from quantile edges
-            self.azimuth_bin_centers = (self.azimuth_bins[:-1] + self.azimuth_bins[1:]) / 2
-            self.zenith_bin_centers = (self.zenith_bins[:-1] + self.zenith_bins[1:]) / 2
-            
-            print("✅ Successfully computed quantile-based bins!")
-            print(f"Azimuth bins: {self.num_azimuth_bins} bins from {self.azimuth_bins[0]:.3f} to {self.azimuth_bins[-1]:.3f} rad")
-            print(f"Zenith bins: {self.num_zenith_bins} bins from {self.zenith_bins[0]:.3f} to {self.zenith_bins[-1]:.3f} rad")
-            
-        except Exception as e:
-            print(f"⚠️  Could not load training data for quantiles: {e}")
-            print("Falling back to uniform bins...")
-            
-            # Fallback to uniform bins
-            self.azimuth_bins = np.linspace(0, 2*np.pi, self.num_azimuth_bins + 1)
-            self.azimuth_bin_centers = (self.azimuth_bins[:-1] + self.azimuth_bins[1:]) / 2
-            
-            self.zenith_bins = np.linspace(0, np.pi, self.num_zenith_bins + 1)
-            self.zenith_bin_centers = (self.zenith_bins[:-1] + self.zenith_bins[1:]) / 2
+        # Create meshgrid and select points within circle
+        theta_grid, phi_grid = np.meshgrid(theta_vals, phi_vals)
+        theta_flat = theta_grid.flatten()
+        phi_flat = phi_grid.flatten()
         
-        # Register as PyTorch buffers so they move with model to GPU
-        self.register_buffer('azimuth_bin_centers_tensor', 
-                           torch.tensor(self.azimuth_bin_centers, dtype=torch.float32))
-        self.register_buffer('zenith_bin_centers_tensor',
-                           torch.tensor(self.zenith_bin_centers, dtype=torch.float32))
+        # Keep only points within ROI circle
+        distances = np.sqrt(theta_flat**2 + phi_flat**2)
+        within_roi = distances <= self.roi_radius_rad
+        
+        theta_roi = theta_flat[within_roi]
+        phi_roi = phi_flat[within_roi]
+        
+        # Take first num_fine_bins points
+        if len(theta_roi) > self.num_fine_bins:
+            theta_roi = theta_roi[:self.num_fine_bins]
+            phi_roi = phi_roi[:self.num_fine_bins]
+        
+        # Convert to tensor
+        bin_centers = torch.tensor(np.column_stack((theta_roi, phi_roi)), dtype=torch.float32)
+        return bin_centers
     
     def _forward(self, x: Tensor) -> Tensor:
-        """Forward pass: return raw logits.
-        
-        For classification tasks, _forward should return raw logits so the loss 
-        function can access them. The compute_loss() method will pass these 
-        logits to CircularSmoothCrossEntropyLoss.
+        """Forward pass combining VMF regression and classification.
         
         Args:
-            x: Output from affine layer [batch_size, num_azimuth_bins + num_zenith_bins]
+            x: Input tensor of shape (batch_size, nb_inputs)
             
         Returns:
-            Raw logits [batch_size, num_azimuth_bins + num_zenith_bins]
+            Tensor: Combined predictions [VMF params, bin probabilities]
         """
-        # For classification, return raw logits (like BinaryClassificationTaskLogits)
-        return x
-    
-    def predict_angles(self, x: Tensor) -> Tensor:
-        """Convert logits to predicted angles using weighted bin centers.
+        # Split outputs
+        vmf_raw = x[:, :4]  # First 4 outputs for VMF
+        classification_raw = x[:, 4:]  # Remaining outputs for classification
         
-        This method is for inference/evaluation, not training.
+        # Process VMF part (same as DirectionReconstructionWithKappa)
+        kappa = torch.linalg.vector_norm(vmf_raw[:, :3], dim=1) + eps_like(vmf_raw)
+        vec_x = vmf_raw[:, 0] / kappa
+        vec_y = vmf_raw[:, 1] / kappa
+        vec_z = vmf_raw[:, 2] / kappa
+        vmf_pred = torch.stack((vec_x, vec_y, vec_z, kappa), dim=1)
+        
+        # Process classification part
+        bin_probs = torch.softmax(classification_raw, dim=-1)
+        
+        # Combine outputs
+        return torch.cat([vmf_pred, bin_probs], dim=1)
+
+    def assign_direction_bins(self, directions: Tensor, telescope_pointing: Tensor) -> Tensor:
+        """Assign direction vectors to angular bins.
         
         Args:
-            x: Input features [batch_size, hidden_size]
+            directions: True direction vectors (batch_size, 3)
+            telescope_pointing: Telescope pointing directions (batch_size, 3)
             
         Returns:
-            Predicted angles [batch_size, 2] (azimuth, zenith)
+            Tensor: Bin assignments (batch_size,) with values 0 to num_fine_bins
+                   (num_fine_bins = outside ROI)
         """
-        # Get logits
-        logits = self._forward(x)
+        batch_size = directions.shape[0]
         
-        # Split azimuth and zenith logits
-        azimuth_logits = logits[:, :self.num_azimuth_bins]
-        zenith_logits = logits[:, self.num_azimuth_bins:]
+        # Convert 3D directions to angular offsets from telescope pointing
+        # Compute angular separation using dot product
+        cos_sep = torch.sum(directions * telescope_pointing, dim=1)
+        angular_sep = torch.acos(torch.clamp(cos_sep, -1.0, 1.0))
         
-        # Convert logits to probabilities
-        azimuth_probs = torch.softmax(azimuth_logits, dim=1)
-        zenith_probs = torch.softmax(zenith_logits, dim=1)
+        # For simplicity, assign to nearest bin center
+        # This is a placeholder - in practice you'd want more sophisticated assignment
+        bin_assignments = torch.full((batch_size,), self.num_fine_bins, dtype=torch.long)
         
-        # Compute weighted average of bin centers (expectation)
-        azimuth_pred = torch.sum(azimuth_probs * self.azimuth_bin_centers_tensor, dim=1)
-        zenith_pred = torch.sum(zenith_probs * self.zenith_bin_centers_tensor, dim=1)
+        # Find events within ROI
+        within_roi = angular_sep <= self.roi_radius_rad
         
-        return torch.stack([azimuth_pred, zenith_pred], dim=1)
-    
-    def _transform_logits_to_angles(self, prediction: Tensor) -> Tensor:
-        """Transform raw logits to angle predictions for inference.
-        
-        This is the key function that converts the 96 classification logits
-        into 2 angle predictions during inference.
-        
-        Args:
-            prediction: Raw logits [batch_size, num_azimuth_bins + num_zenith_bins]
+        # For events within ROI, assign to closest bin
+        if torch.any(within_roi):
+            # Convert to theta/phi offsets (simplified approach)
+            roi_events = directions[within_roi]
+            roi_pointing = telescope_pointing[within_roi]
             
-        Returns:
-            Predicted angles [batch_size, 2] (azimuth, zenith) in radians
-        """
-        # Split azimuth and zenith logits
-        azimuth_logits = prediction[:, :self.num_azimuth_bins]
-        zenith_logits = prediction[:, self.num_azimuth_bins:]
+            # Compute angular distances to all bin centers
+            # This is a simplified implementation - would need proper spherical geometry
+            if len(self.bin_centers) > 0:
+                # Assign to bin 0 for now (would need proper spherical distance calculation)
+                bin_assignments[within_roi] = 0
         
-        # Convert logits to probabilities
-        azimuth_probs = torch.softmax(azimuth_logits, dim=1)
-        zenith_probs = torch.softmax(zenith_logits, dim=1)
-        
-        # Compute weighted average of bin centers (expectation)
-        azimuth_pred = torch.sum(azimuth_probs * self.azimuth_bin_centers_tensor, dim=1)
-        zenith_pred = torch.sum(zenith_probs * self.zenith_bin_centers_tensor, dim=1)
-        
-        return torch.stack([azimuth_pred, zenith_pred], dim=1)
+        return bin_assignments
+
+

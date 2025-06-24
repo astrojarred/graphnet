@@ -8,16 +8,9 @@ from .task import (
 )
 
 from .reconstruction import (
-    MAGICDirectionClassificationTask,
     DirectionReconstructionWithKappa,
     AzimuthReconstructionWithKappa,
     ZenithReconstructionWithKappa,
     EnergyReconstruction,
-)
-
-from .magic_reconstruction import (
-    MAGICDirectionReconstructionVMF,
-    MAGICDirectionClassification,
-    MAGICHybridDirectionTask,
-    MAGICAngularResolution,
+    HybridDirectionTask,
 )

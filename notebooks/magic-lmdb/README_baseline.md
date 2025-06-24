@@ -41,21 +41,31 @@ python magic_baseline.py --path /path/to/data.lmdb --wandb --wandb-project my-ma
   - `MAGICDirectionReconstruction`: Unified zenith+azimuth with VonMisesFisher2DLoss
 - **Features**: 7D node features (x_cam, y_cam, t, tel_id, signal, telescope_phi, telescope_theta)
 
-## Arguments
+## CLI Arguments
 
-### Required
-- `--path`: Path to your MAGIC LMDB dataset
+### Data & Output
+- `--path`: Path to LMDB dataset (required)
+- `--output-dir`: Output directory (default: ./magic_baseline_results)
 
-### Common Options
-- `--max-epochs`: Training epochs (default: 10)
-- `--batch-size`: Batch size (default: 32)
+### Training Control
+- `--max-epochs`: Maximum epochs (default: 50)
+- `--early-stopping-patience`: Early stopping patience (default: 10)
+- `--batch-size`: Batch size (default: 128)
+- `--num-workers`: Data loading workers (default: 10)
 - `--gpus`: GPU IDs to use (e.g., `--gpus 0 1`)
 - `--output-dir`: Where to save results (default: ./magic_baseline_results)
 
+### Resume & Checkpoints
+- `--resume-from-checkpoint`: Resume training from checkpoint (.ckpt file)
+- `--wandb-run-id`: Resume specific W&B run
+
+### Evaluation Only
+- `--eval-only`: Skip training, only run evaluation
+- `--checkpoint`: Model checkpoint for evaluation (.pth file, required with --eval-only)
+- `--use-test-data`: Use test split instead of validation for evaluation
+
 ### Advanced
 - `--learning-rate`: Learning rate (default: 1e-3)
-- `--num-workers`: Data loading workers (default: 1)
-- `--early-stopping-patience`: Early stopping patience (default: 5)
 
 ### Logging
 - `--wandb`: Enable Weights & Biases logging
@@ -198,3 +208,35 @@ This baseline gives you a working multi-task model. To improve performance:
 **Recommendation**: Start with immediate improvements first. Only move to advanced improvements once you have a well-debugged baseline and understand what's working/not working.
 
 Happy training! 🚀 
+
+## Usage Examples
+
+### Basic Training
+```bash
+python magic_baseline.py --path data.lmdb --max-epochs 30
+```
+
+### With GPU and W&B Logging
+```bash
+python magic_baseline.py --path data.lmdb --max-epochs 50 --gpus 0 1 --wandb
+```
+
+### Resume Training from Checkpoint
+```bash
+python magic_baseline.py --path data.lmdb --resume-from-checkpoint ./results/checkpoints/epoch=25.ckpt
+```
+
+### Evaluation Only (No Training)
+```bash
+# Evaluate on validation set
+python magic_baseline.py --path data.lmdb --eval-only --checkpoint ./results/model.pth
+
+# Evaluate on test set  
+python magic_baseline.py --path data.lmdb --eval-only --checkpoint ./results/model.pth --use-test-data
+```
+
+### Multiple GPUs with Early Stopping
+```bash
+python magic_baseline.py --path data.lmdb --gpus 0 1 --early-stopping-patience 5
+``` 
+ 

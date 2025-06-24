@@ -466,9 +466,16 @@ class DynEdgeStereo(GNN):
         original_data: Data
     ) -> Tensor:
         """Calculate stereo-specific global variables."""
+        # Get device from original data to ensure consistency
+        device = original_data.x.device
+        
         # Basic global variables for each telescope
-        tel1_globals = self._calculate_telescope_global_variables(tel1_data)
-        tel2_globals = self._calculate_telescope_global_variables(tel2_data)
+        tel1_globals = self._calculate_telescope_global_variables(tel1_data, device)
+        tel2_globals = self._calculate_telescope_global_variables(tel2_data, device)
+        
+        # Ensure both global variables are on the correct device
+        tel1_globals = tel1_globals.to(device)
+        tel2_globals = tel2_globals.to(device)
         
         # Stereo-specific features
         if self._add_stereo_global_features:
@@ -504,20 +511,44 @@ class DynEdgeStereo(GNN):
             
         return global_variables
         
-    def _calculate_telescope_global_variables(self, data: Data) -> Tensor:
+    def _calculate_telescope_global_variables(self, data: Data, target_device: Optional[torch.device] = None) -> Tensor:
         """Calculate global variables for a single telescope."""
         x, edge_index, batch = data.x, data.edge_index, data.batch
         
+        # Handle empty telescope case
+        if x is None or x.shape[0] == 0 or batch is None or batch.numel() == 0:
+            # Return empty tensor with correct dimensions
+            # Use target device if provided, otherwise try to infer
+            if target_device is not None:
+                device = target_device
+                expected_features = 11  # Default: 7 features + 4 homophily terms
+            elif x is not None and x.numel() > 0:
+                device = x.device
+                expected_features = x.shape[1] + 4
+            elif batch is not None and batch.numel() > 0:
+                device = batch.device
+                expected_features = 11  # Default: 7 features + 4 homophily terms
+            elif torch.cuda.is_available():
+                device = torch.device('cuda:0')
+                expected_features = 11
+            else:
+                device = torch.device('cpu')
+                expected_features = 11
+            # Return zeros with shape [0, expected_features]
+            return torch.zeros(0, expected_features, device=device)
+        
         # Ensure all tensors are on the same device
         device = x.device
-        edge_index = edge_index.to(device)
-        batch = batch.to(device)
+        if edge_index is not None:
+            edge_index = edge_index.to(device)
+        if batch is not None:
+            batch = batch.to(device)
         
         # Calculate mean features
         global_means = scatter_mean(x, batch, dim=0)
         
         # Calculate homophily (handle edge case of no edges)
-        if edge_index.shape[1] > 0:
+        if edge_index is not None and edge_index.shape[1] > 0:
             h_x, h_y, h_z, h_t = calculate_xyzt_homophily(x, edge_index, batch)
             
             # Ensure homophily terms have correct shape [batch_size, 1]
@@ -551,7 +582,11 @@ class DynEdgeStereo(GNN):
                     
         else:
             # No edges - create zero homophily
-            batch_size = batch.max().item() + 1
+            # Safe batch size calculation
+            if batch is not None and batch.numel() > 0:
+                batch_size = batch.max().item() + 1
+            else:
+                batch_size = 0
             h_x = torch.zeros(batch_size, 1, device=device)
             h_y = torch.zeros(batch_size, 1, device=device)
             h_z = torch.zeros(batch_size, 1, device=device)
