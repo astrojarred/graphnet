@@ -1,0 +1,86 @@
+arguments:
+  backbone:
+    ModelConfig:
+      arguments:
+        # Transformer architecture settings - optimized for MAGIC
+        hidden_dim: 384  # Start smaller than IceCube's 768 for faster training
+        mlp_ratio: 4     # Standard transformer MLP expansion ratio
+        seq_length: 512  # Increased from IceCube's 192 for MAGIC's larger events
+        depth: 12        # Standard transformer depth
+        head_size: 32    # Attention head size - 32 works well per IceCube winners
+        depth_rel: 4     # Relative attention layers for physics-informed processing
+        n_rel: 1         # Number of relative layers before switching to global
+        scaled_emb: true # Scale embeddings for better training
+        
+        # MAGIC-specific settings
+        n_features: 7    # MAGIC has 7 features vs IceCube's 6
+        tel_id_feature_idx: 3  # Index of telescope ID in feature vector
+        exclude_tel_id_from_processing: true  # Don't use tel_id in transformer
+        dual_telescope_processing: true       # Process telescopes separately then fuse
+        
+        # Optional DynEdge hybrid approach
+        include_dynedge: false  # Start without DynEdge, can enable for comparison
+        dynedge_args:
+          nb_inputs: 6  # Effective features excluding tel_id
+          nb_neighbours: 12
+          post_processing_layer_sizes: [256, 192]  # Half of hidden_dim for fusion
+          dynedge_layer_sizes: [[128, 256], [256, 256], [256, 256]]
+          activation_layer: "gelu"
+          add_norm_layer: true
+          skip_readout: true
+          
+      class_name: MAGICIceMix
+      
+  graph_definition:
+    ModelConfig:
+      arguments:
+        columns: [0, 1, 2]  # x_cam, y_cam, t for k-NN (exclude tel_id)
+        detector:
+          ModelConfig:
+            arguments: {}
+            class_name: MAGICDetectorFixed  # Use optimized preprocessing
+        dtype: null
+        nb_nearest_neighbours: 12  # Good for MAGIC's hexagonal geometry
+        node_definition:
+          ModelConfig:
+            arguments:
+              input_feature_names: [x_cam, y_cam, t, tel_id, signal, telescope_phi, telescope_theta]
+              max_pulses: 512      # Match transformer seq_length
+              tel_id_name: "tel_id"
+              max_pulses_per_telescope: 256  # Balance between telescopes
+              telescope_balancing: true      # Ensure both telescopes represented
+            class_name: MAGICIceMixNodes
+      class_name: KNNGraph
+      
+  # Optimizer settings based on IceCube winners
+  optimizer_class: '!class torch.optim.adamw AdamW'
+  optimizer_kwargs:
+    lr: 5e-4      # IceCube winners used 5e-4 for first epoch
+    weight_decay: 0.05  # Standard for transformers
+    eps: 1e-8
+    
+  # Learning rate scheduling - cosine annealing with warmup
+  scheduler_class: '!class torch.optim.lr_scheduler CosineAnnealingLR'
+  scheduler_config:
+    interval: step
+  scheduler_kwargs:
+    T_max: 50000   # Adjust based on dataset size and epochs
+    eta_min: 1e-6  # Minimum learning rate
+    
+  # Direction reconstruction task with von Mises-Fisher loss
+  tasks:
+  - ModelConfig:
+      arguments:
+        hidden_size: 384  # Match backbone hidden_dim
+        loss_function:
+          ModelConfig:
+            arguments: {}
+            class_name: VonMisesFisher3DLoss  # Physics-informed directional loss
+        prediction_labels: [dir_x_pred, dir_y_pred, dir_z_pred, kappa_pred]
+        target_labels: [direction]
+        transform_prediction_and_target: null
+        transform_support: null
+        transform_target: null
+      class_name: DirectionReconstructionWithKappa
+      
+class_name: StandardModel
