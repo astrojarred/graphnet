@@ -7,4 +7,5 @@ from .dynedge_kaggle_tito import DynEdgeTITO
 from .dynedge_stereo import DynEdgeStereo
 from .RNN_tito import RNN_TITO
 from .icemix import DeepIce
+from .magic_icemix import MAGICIceMix
 from .particlenet import ParticleNeT

@@ -173,3 +173,169 @@ class SpacetimeEncoder(LightningModule):
         sin_emb = self.sin_emb(1024 * four_distance.clip(-4, 4))
         rel_attn = self.projection(sin_emb)
         return rel_attn
+
+
+class SpacetimeEncoderMAGIC(LightningModule):
+    """Spacetime encoder for MAGIC's 2D camera + time geometry.
+    
+    MAGIC telescopes have a fundamentally different geometry than IceCube:
+    - 2D camera coordinates (x_cam, y_cam) instead of 3D detector positions
+    - Time is feature index 2, not 3
+    - Features: [x_cam, y_cam, t, tel_id, signal, telescope_phi, telescope_theta]
+    
+    This encoder correctly calculates spacetime intervals for Cherenkov light
+    propagation in MAGIC's stereo telescope system.
+    """
+
+    def __init__(
+        self,
+        seq_length: int = 32,
+        time_scaling: float = 1.0,
+    ):
+        """Construct `SpacetimeEncoderMAGIC`.
+
+        Args:
+            seq_length: Dimensionality of the sinusoidal positional embeddings.
+            time_scaling: Factor to scale time relative to spatial coordinates.
+                Used to balance the importance of temporal vs spatial relationships.
+        """
+        super().__init__()
+        self.sin_emb = SinusoidalPosEmb(dim=seq_length)
+        self.projection = nn.Linear(seq_length, seq_length)
+        self.time_scaling = time_scaling
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Forward pass for MAGIC data.
+        
+        Args:
+            x: Input tensor with shape [batch_size, seq_len, n_features]
+               where features are [x_cam, y_cam, t, tel_id, signal, ...]
+               
+        Returns:
+            Relative attention bias tensor for transformer attention
+        """
+        # MAGIC features: [x_cam, y_cam, t, tel_id, signal, telescope_phi, telescope_theta]
+        pos = x[:, :, :2]   # Use features 0, 1 for camera coordinates (x_cam, y_cam)
+        time = x[:, :, 2]   # Use feature 2 for time (t)
+        
+        # Calculate 2D+time spacetime interval for Cherenkov light
+        # Spatial distance squared between camera pixels
+        spatial_dist_sq = (pos[:, :, None] - pos[:, None, :]).pow(2).sum(-1)
+        
+        # Time distance squared (scaled to be comparable with spatial distances)
+        time_dist_sq = ((time[:, :, None] - time[:, None, :]) * self.time_scaling).pow(2)
+        
+        # 2D+time spacetime interval: ds² = dx² + dy² - c²dt²
+        # For Cherenkov light, particles traveling ~at speed of light should have ds² ≈ 0
+        spacetime_interval = spatial_dist_sq - time_dist_sq
+        
+        # Calculate four-distance with proper sign handling
+        four_distance = torch.sign(spacetime_interval) * torch.sqrt(
+            torch.abs(spacetime_interval)
+        )
+        
+        # Generate sinusoidal embeddings for the relative bias
+        sin_emb = self.sin_emb(1024 * four_distance.clip(-4, 4))
+        rel_attn = self.projection(sin_emb)
+        
+        return rel_attn
+
+
+class FourierEncoderMAGIC(LightningModule):
+    """Fourier encoder for MAGIC telescope data.
+    
+    MAGIC features (after tel_id exclusion): [x_cam, y_cam, t, signal, telescope_phi, telescope_theta]
+    This encoder handles MAGIC's specific feature layout and doesn't assume auxiliary flags.
+    """
+
+    def __init__(
+        self,
+        seq_length: int = 128,
+        mlp_dim: Optional[int] = None,
+        output_dim: int = 384,
+        scaled: bool = False,
+        n_features: int = 6,  # After excluding tel_id: 6 features
+    ):
+        """Construct `FourierEncoderMAGIC`.
+
+        Args:
+            seq_length: Dimensionality of the base sinusoidal positional embeddings.
+            mlp_dim: Size of hidden, latent space of MLP. If not given, set automatically.
+            output_dim: Dimension of the output.
+            scaled: Whether or not to scale the embeddings.
+            n_features: Number of features in MAGIC data (after excluding tel_id).
+        """
+        super().__init__()
+
+        self.sin_emb = SinusoidalPosEmb(dim=seq_length, scaled=scaled)
+        self.sin_emb2 = SinusoidalPosEmb(dim=seq_length // 2, scaled=scaled)
+
+        if n_features < 4:
+            raise ValueError(
+                f"At least x_cam, y_cam, t, and signal are required for MAGIC. "
+                f"Got only {n_features} features."
+            )
+
+        # MAGIC doesn't have auxiliary flags, so we calculate hidden_dim differently
+        # Features: [x_cam, y_cam, t, signal, telescope_phi, telescope_theta] = 6 features
+        # Each feature gets sinusoidal encoding, plus length encoding
+        hidden_dim = n_features * seq_length + seq_length // 2  # +length encoding
+
+        if mlp_dim is None:
+            mlp_dim = hidden_dim
+
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, mlp_dim),
+            nn.LayerNorm(mlp_dim),
+            nn.GELU(),
+            nn.Linear(mlp_dim, output_dim),
+        )
+
+        self.n_features = n_features
+
+    def forward(self, x: Tensor, seq_length: Tensor) -> Tensor:
+        """Forward pass for MAGIC data.
+        
+        Args:
+            x: Input tensor with MAGIC features [batch, seq_len, n_features]
+               Features: [x_cam, y_cam, t, signal, telescope_phi, telescope_theta]
+            seq_length: Sequence lengths per batch
+            
+        Returns:
+            Fourier-encoded features
+        """
+        length = torch.log10(seq_length.to(dtype=x.dtype))
+        embeddings = []
+
+        # Encode each MAGIC feature with appropriate scaling
+        if self.n_features >= 2:
+            # Camera coordinates (x_cam, y_cam) - scale for camera size ~60cm
+            embeddings.append(self.sin_emb(4096 * x[:, :, 0]))  # x_cam
+            embeddings.append(self.sin_emb(4096 * x[:, :, 1]))  # y_cam
+
+        if self.n_features >= 3:
+            # Time - scale for nanosecond precision
+            embeddings.append(self.sin_emb(4096 * x[:, :, 2]))  # t
+
+        if self.n_features >= 4:
+            # Signal (charge equivalent) - scale for dynamic range
+            embeddings.append(self.sin_emb(1024 * x[:, :, 3]))  # signal
+
+        if self.n_features >= 5:
+            # Telescope pointing phi - scale for small angles
+            embeddings.append(self.sin_emb(8192 * x[:, :, 4]))  # telescope_phi
+
+        if self.n_features >= 6:
+            # Telescope pointing theta - scale for small angles  
+            embeddings.append(self.sin_emb(8192 * x[:, :, 5]))  # telescope_theta
+
+        # Add sequence length encoding
+        embeddings.append(
+            self.sin_emb2(length).unsqueeze(1).expand(-1, max(seq_length), -1)
+        )
+
+        # Concatenate all embeddings
+        x = torch.cat(embeddings, -1)
+        x = self.mlp(x)
+
+        return x

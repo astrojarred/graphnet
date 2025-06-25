@@ -12,3 +12,7 @@ from .nodes import (
     NodeAsDOMTimeSeries,
     IceMixNodes,
 )
+from .magic_icemix_nodes import (
+    MAGICIceMixNodes,
+    MAGICIceMixNodesSimple,
+)
