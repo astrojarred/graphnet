@@ -9,40 +9,52 @@ arguments:
             arguments: {}
         node_definition:
           ModelConfig:
-            class_name: NodesAsPulses
-            arguments: {}
+            class_name: MAGICLimitedNodes
+            arguments:
+              max_pulses: 1024
+              sampling_strategy: "signal"
+        columns: [0, 1, 2, 3]
         nb_nearest_neighbours: 8
   backbone:
     ModelConfig:
       class_name: MagicDeepSky
       arguments:
-        hidden_dim: 160
-        seq_length: 160
-        depth: 4
-        head_size: 32
-        n_rel: 3
+        hidden_dim: 384
+        seq_length: 192
+        depth: 12
+        head_size: 64
+        n_rel: 4
         scaled_emb: true
         n_features: 7
-        include_dynedge: false
+        include_dynedge: true
+        dynedge_args:
+          nb_inputs: 7
+          nb_neighbours: 8
+          post_processing_layer_sizes: [168, 192]
+          activation_layer: gelu
+          add_norm_layer: true
+          skip_readout: true
   tasks:
     - ModelConfig:
-        class_name: AngularOffsetReconstructionWithKappa
+        class_name: DirectionReconstructionWithKappa
         arguments:
-          hidden_size: 160
-          target_labels: angular_offset
+          hidden_size: 384
+          target_labels: direction_and_axis
           loss_function:
             ModelConfig:
-              class_name: MAGICFieldOfViewLoss
+              class_name: MAGICEnsembleLoss
               arguments:
+                vmf_weight: 1.0
+                fov_weight: 50.0
                 fov_radius_deg: 2.50
-                fov_penalty_weight: 2000.0
+                fov_loss_mode: logcosh
   optimizer_class: '!class torch.optim.adamw AdamW'
   optimizer_kwargs:
     lr: 0.0005
     weight_decay: 0.05
   scheduler_class: '!class torch.optim.lr_scheduler CosineAnnealingLR'
   scheduler_kwargs:
-    T_max: 10
+    T_max: 30
     eta_min: 1e-5
 class_name: StandardModel
 

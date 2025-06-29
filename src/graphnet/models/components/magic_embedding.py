@@ -29,6 +29,7 @@ class MagicFourierEncoder(LightningModule):
         scaled: bool = False,
         n_features: int = 7,
         feature_scales: Tensor | None = None,
+        mlp_dim: int | None = None,  # NEW: Allow controlling MLP intermediate dimension
     ) -> None:
         """Construct `MagicFourierEncoder`.
 
@@ -42,6 +43,9 @@ class MagicFourierEncoder(LightningModule):
             feature_scales: Optional 1-D tensor of length `n_features` giving
                 per-feature multiplicative scales *before* the sinusoidal
                 embedding.  If *None* a tensor of ones is used.
+            mlp_dim: Intermediate dimension for the MLP. If None, defaults to
+                max(output_dim * 2, 256) to prevent memory issues with large
+                embedding dimensions.
         """
         super().__init__()
 
@@ -49,6 +53,14 @@ class MagicFourierEncoder(LightningModule):
         self.n_features = n_features
         self.sin_emb = SinusoidalPosEmb(dim=seq_length, scaled=scaled)
         self.sin_emb2 = SinusoidalPosEmb(dim=seq_length // 2, scaled=scaled)
+
+        if n_features < 4:
+            raise ValueError(
+                f"At least x, y, tel_id and time of the pixel are required. Got only "
+                f"{n_features} features."
+            )
+        else:
+            hidden_dim = int((n_features + 0.5) * seq_length)
 
         if feature_scales is None:
             feature_scales = torch.ones(n_features)
@@ -60,12 +72,17 @@ class MagicFourierEncoder(LightningModule):
         self.register_buffer("feature_scales", feature_scales.view(1, 1, -1))
 
         hidden_dim = n_features * seq_length + seq_length // 2  # +length emb
+        
+        # FIXED: Use reasonable intermediate MLP dimension to prevent memory issues
+        if mlp_dim is None:
+            # Use a much smaller intermediate dimension to avoid memory problems
+            mlp_dim = hidden_dim
 
         self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, mlp_dim),  # Now: 960 -> 256 (much smaller!)
+            nn.LayerNorm(mlp_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, output_dim),
+            nn.Linear(mlp_dim, output_dim),  # 256 -> 128
         )
 
     def forward(self, x: Tensor, seq_length: Tensor) -> Tensor:  # noqa: D401

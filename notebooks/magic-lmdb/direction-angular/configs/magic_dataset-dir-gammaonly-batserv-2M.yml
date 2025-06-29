@@ -1,4 +1,4 @@
-path: /mnt/data/jarred/Data/MAGIC_DL/MCs_raw/LMDB_75k_cleaned_nonstd/za05to35.lmdb
+path: /mnt/scratch/jgreen/LMDB_2M_gammas/za05to35.lmdb
 graph_definition:
   arguments:
     columns: [0, 1, 2]

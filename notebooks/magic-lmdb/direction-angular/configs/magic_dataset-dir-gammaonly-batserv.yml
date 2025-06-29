@@ -4,7 +4,7 @@ graph_definition:
     columns: [0, 1, 2]
     detector:
       arguments: {}
-      class_name: MAGICDetector
+      class_name: MAGICDetectorFixed
     dtype: torch.float32
     nb_nearest_neighbours: 8
     node_definition:
@@ -38,14 +38,17 @@ labels:
       azimuth_key: "true_phi"
       zenith_key: "true_theta"
     class_name: Direction
-  angular_offset:
+  true_telescope:
     arguments:
-      key: "angular_offset"
       telescope_phi_key: "telescope_phi"
       telescope_theta_key: "telescope_theta"
-      true_phi_key: "true_phi"
-      true_theta_key: "true_theta"
-    class_name: AngularOffsetLabel
+    class_name: TrueTelescopeLabel
+  direction_and_axis:
+    arguments:
+      dir_key: "direction"
+      tel_key: "true_telescope"
+      key: "direction_and_axis"
+    class_name: DirectionWithAxisLabel
 selection:
   test: "event_id % 10 == 0 and particle_id == 1"
   validation: "event_id % 10 == 1 and particle_id == 1"

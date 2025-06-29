@@ -55,6 +55,7 @@ def main(
     limit_train_batches: Optional[float] = None,
     limit_val_batches: Optional[float] = None,
     val_check_interval: Optional[float] = None,
+    gradient_clip_val: float = 0.0,
 ) -> None:
     """Train MAGIC Angular Offset model for direction reconstruction.
     
@@ -84,6 +85,7 @@ def main(
         limit_train_batches: Proportion or count of training batches per epoch (PyTorch Lightning semantics)
         limit_val_batches: Proportion or count of validation batches per epoch
         val_check_interval: How frequently to run validation within an epoch (in epochs if float ≤1, in batches if int >1)
+        gradient_clip_val: The value to clip gradients at (disabled if 0).
     """
     # Set up logging
     logger = Logger()
@@ -132,13 +134,13 @@ def main(
     
     # Construct datasets from multiple selections
     train_dataset = EnsembleDataset(
-        [datasets[key] for key in datasets if key.startswith("train")]
+        [datasets[key] for key in datasets if key.startswith("train")]  # type: ignore
     )
     valid_dataset = EnsembleDataset(
-        [datasets[key] for key in datasets if "validation" in key]
+        [datasets[key] for key in datasets if "validation" in key]  # type: ignore
     )
     test_dataset = EnsembleDataset(
-        [datasets[key] for key in datasets if "test" in key]
+        [datasets[key] for key in datasets if "test" in key]  # type: ignore
     )
 
     # Debug: Print dataset information
@@ -154,13 +156,13 @@ def main(
         dataloader_config["persistent_workers"] = False
     
     training_dataloader = DataLoader(
-        train_dataset, shuffle=True, **dataloader_config
+        train_dataset, shuffle=True, **dataloader_config  # type: ignore
     )
     validation_dataloader = DataLoader(
-        valid_dataset, shuffle=False, **dataloader_config
+        valid_dataset, shuffle=False, **dataloader_config  # type: ignore
     )
     test_dataloader = DataLoader(
-        test_dataset, shuffle=False, **dataloader_config
+        test_dataset, shuffle=False, **dataloader_config  # type: ignore
     )
     
     # Build or load model
@@ -210,7 +212,7 @@ def main(
             except RuntimeError as e:
                 logger.warning(f"Strict loading failed: {e}")
                 try:
-                    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+                    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)  # type: ignore
                     if missing_keys:
                         logger.warning(f"Missing keys: {missing_keys}")
                     if unexpected_keys:
@@ -232,7 +234,7 @@ def main(
     if wandb:
         from pytorch_lightning.utilities import rank_zero_only
         if rank_zero_only.rank == 0:
-            if not wandb_logger.experiment.resumed:
+            if wandb_logger and not wandb_logger.experiment.resumed:
                 logger.info("Logging config to W&B")
                 config_dict = {
                     "batch_size": batch_size,
@@ -251,16 +253,18 @@ def main(
                     "limit_train_batches": limit_train_batches,
                     "limit_val_batches": limit_val_batches,
                     "val_check_interval": val_check_interval,
+                    "gradient_clip_val": gradient_clip_val,
                 }
                 wandb_logger.experiment.config.update(config_dict)
                 wandb_logger.experiment.config.update(dataset_config.as_dict())
-            else:
+            elif checkpoint_path:
                 logger.info(f"Resuming training from checkpoint {checkpoint_path}")
     
     # Training configuration
     fit_config = {
         "gpus": gpus,
         "max_epochs": max_epochs,
+        "distribution_strategy": "ddp_find_unused_parameters_true",
         "early_stopping_patience": early_stopping_patience,
         "logger": wandb_logger,
         "precision": precision,
@@ -269,11 +273,14 @@ def main(
         "limit_train_batches": limit_train_batches,
         "limit_val_batches": limit_val_batches,
         "val_check_interval": val_check_interval,
+        "gradient_clip_val": gradient_clip_val,
     }
     
     # Train the model
     logger.info("Starting training with competition-winning VMF approach")
     try:
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
         model.fit(
             training_dataloader,
             validation_dataloader,
@@ -533,7 +540,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--early-stopping-patience",
         type=int,
-        default=5,
+        default=10,
         help="Early stopping patience (default: %(default)s)",
     )
     
@@ -612,14 +619,20 @@ if __name__ == "__main__":
         help="How often within one training epoch to check the validation set.",
     )
     
+    parser.add_argument(
+        "--gradient-clip-val",
+        type=float,
+        default=0.0,
+        help="Gradient clipping value to prevent exploding gradients (default: %(default)s)",
+    )
+    
     args = parser.parse_args()
 
     # change dataset_config to dataset_config_path
     args.dataset_config_path = args.dataset_config
-    del args.dataset_config
-
+    del args.dataset_config  # type: ignore
     args.model_config_path = args.model_config
-    del args.model_config
+    del args.model_config  # type: ignore
     
     # Run training
     main(**vars(args))

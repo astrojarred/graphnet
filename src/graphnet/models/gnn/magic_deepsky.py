@@ -24,6 +24,7 @@ class MagicDeepSky(DeepIce):
         dynedge_args: Dict[str, Any] | None = None,
         n_features: int = 7,
         feature_scales: Tensor | None = None,
+        mlp_dim: int | None = None,
     ) -> None:
         # Initialise the regular DeepIce backbone first (creates FourierEncoder)
         super().__init__(
@@ -47,6 +48,7 @@ class MagicDeepSky(DeepIce):
             scaled=scaled_emb,
             n_features=n_features,
             feature_scales=feature_scales,
+            mlp_dim=mlp_dim,
         )
 
     # Forward is inherited unchanged from DeepIce; we only changed the encoder. 

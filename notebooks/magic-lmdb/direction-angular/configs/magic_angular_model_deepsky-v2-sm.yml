@@ -34,8 +34,8 @@ arguments:
             ModelConfig:
               class_name: MAGICFieldOfViewLoss
               arguments:
-                fov_radius_deg: 1.75
-                fov_penalty_weight: 10.0
+                fov_radius_deg: 2.50
+                fov_penalty_weight: 2000.0
   optimizer_class: '!class torch.optim.adamw AdamW'
   optimizer_kwargs:
     lr: 0.0005
