@@ -167,6 +167,7 @@ def generate_predictions(
 
     if additional_attributes is None:
         additional_attributes = [
+            "event_id",
             "true_energy",
             "telescope_phi",
             "telescope_theta",
@@ -510,6 +511,8 @@ def evaluate_camera_plane_model(
     if save_results:
         csv_path = out_dir / "camera_plane_results.csv"
         results_df.to_csv(csv_path, index=False)
+        parquet_path = out_dir / "camera_plane_results.parquet"
+        results_df.to_parquet(parquet_path, index=False)
         with open(out_dir / "camera_plane_metrics.json", "w") as f:
             json.dump(metrics, f, indent=2)
         logger.info("✓ Saved results to %s", csv_path)

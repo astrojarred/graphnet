@@ -8,10 +8,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Callable, ClassVar
 
 from graphnet.models.task import StandardLearnedTask
-from graphnet.training.loss_functions import LossFunction
+from graphnet.training.loss_functions import (
+    LossFunction,
+    VonMisesFisher3DLoss,
+)
 from graphnet.training.labels import Label
 from graphnet.utilities.maths import eps_like
 
@@ -137,94 +140,76 @@ class AngularOffsetLabel(Label):
         return result
 
 
-class MAGICFieldOfViewLoss(LossFunction):
-    """Von Mises-Fisher loss with MAGIC field-of-view constraints.
-    
-    Combines VMF loss for directional prediction with strong penalties
-    for predictions outside MAGIC's 3.5° field of view.
+class MAGICFieldOfViewLoss(VonMisesFisher3DLoss):
+    """3-D von Mises–Fisher loss plus MAGIC-specific field-of-view penalties.
+
+    The core VMF term (direction + uncertainty) is delegated to
+    ``VonMisesFisher3DLoss`` for numerical stability.  We then add
+    domain-specific penalties:
+
+    • a quadratic punishment when the predicted direction lies outside the
+      telescope FoV (3.5° diameter ≃ 1.75° radius). Simulation FoV is 5° diameter ≃ 2.5° radius.
+    • a small punishment if the *true* direction is outside the FoV (captures
+      data-quality effects but at 10 % of the weight).
+    • a regularisation that discourages unreasonably large *κ* values.
     """
-    
+
     def __init__(
         self,
-        fov_radius_deg: float = 1.75,  # MAGIC FoV radius in degrees
-        fov_penalty_weight: float = 100.0,  # Penalty weight for FoV violations
-        uncertainty_regularization: float = 0.01,  # Kappa regularization weight
-    ):
-        """Initialize MAGIC FoV loss.
-        
-        Args:
-            fov_radius_deg: Field of view radius in degrees (default 1.75° for 3.5° diameter)
-            fov_penalty_weight: Weight for penalty outside FoV
-            uncertainty_regularization: Weight for kappa regularization
-        """
+        fov_radius_deg: float = 2.50,
+        fov_penalty_weight: float = 2000.0,
+        uncertainty_regularization: float = 0.01,
+    ) -> None:
         super().__init__()
+
         self.fov_radius_rad = np.deg2rad(fov_radius_deg)
         self.fov_penalty_weight = fov_penalty_weight
         self.uncertainty_reg = uncertainty_regularization
-        
-    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
-        """Calculate loss with FoV constraints.
-        
-        Args:
-            prediction: Model output [N, 4] = [x_offset, y_offset, z_offset, kappa]
-            target: Target offset vectors [N, 3] = [x_target, y_target, z_target]
-            
-        Returns:
-            Loss tensor [N,]
-        """
-        # Extract predictions
-        pred_direction = prediction[:, :3]  # [N, 3]
-        kappa = prediction[:, 3]  # [N,]
-        
-        # Ensure target is properly shaped
-        if target.dim() == 1:
-            target = target.unsqueeze(0)
-        elif target.dim() == 3:
-            # Handle case where target has shape [batch_size, 1, 3] from torch.stack
-            target = target.squeeze(1)
+
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:  # type: ignore[override]
+        # Base von Mises–Fisher loss (shape [N,])
+        vmf_loss = super()._forward(prediction, target)
+
+        # Make sure target shape is [N, 3]
         target = target.reshape(-1, 3)
-        
-        # Normalize predicted directions
-        pred_norm = torch.linalg.norm(pred_direction, dim=1, keepdim=True)
-        pred_direction_norm = pred_direction / (pred_norm + eps_like(pred_direction))
-        
-        # Calculate Von Mises-Fisher loss
-        # VMF loss: -kappa * dot(pred, target) + log(I0(kappa))
-        dot_product = torch.sum(pred_direction_norm * target, dim=1)
-        
-        # Approximate log(I0(kappa)) for numerical stability
-        # For large kappa: log(I0(kappa)) ≈ kappa - 0.5*log(2*pi*kappa)
-        # For small kappa: log(I0(kappa)) ≈ log(1 + kappa^2/4)
-        log_i0_approx = torch.where(
-            kappa > 10,
-            kappa - 0.5 * torch.log(2 * np.pi * kappa + eps_like(kappa)),
-            torch.log(1 + kappa**2 / 4 + eps_like(kappa))
-        )
-        
-        vmf_loss = -kappa * dot_product + log_i0_approx
-        
-        # Calculate field-of-view penalty
-        # Convert offset vectors to angular separations
-        pred_angular_sep = torch.acos(torch.clamp(pred_direction_norm[:, 2], -1.0, 1.0))
-        target_angular_sep = torch.acos(torch.clamp(target[:, 2], -1.0, 1.0))
-        
-        # Penalty for predictions outside FoV
-        fov_violation_pred = torch.relu(pred_angular_sep - self.fov_radius_rad)
-        fov_violation_target = torch.relu(target_angular_sep - self.fov_radius_rad)
-        
-        # Strong penalty for predicting outside FoV
-        fov_penalty = self.fov_penalty_weight * (fov_violation_pred**2)
-        
-        # Additional penalty if target is outside FoV (data quality issue)
-        target_penalty = self.fov_penalty_weight * 0.1 * (fov_violation_target**2)
-        
-        # Kappa regularization to prevent over-confidence
-        kappa_reg = self.uncertainty_reg * torch.relu(kappa - 100)**2
-        
-        # Total loss
-        total_loss = vmf_loss + fov_penalty + target_penalty + kappa_reg
-        
-        return total_loss
+
+        # Angular distance of prediction/target from telescope axis (z)
+        pred_dir = prediction[:, :3]
+        pred_angular = torch.acos(torch.clamp(pred_dir[:, 2], -1.0, 1.0))
+
+        target_angular = torch.acos(torch.clamp(target[:, 2], -1.0, 1.0))
+
+        # Quadratic penalties for FoV violations
+        fov_violation_pred = torch.relu(pred_angular - self.fov_radius_rad)
+        fov_violation_target = torch.relu(target_angular - self.fov_radius_rad)
+
+        pred_penalty = self.fov_penalty_weight * fov_violation_pred**2
+        target_penalty = self.fov_penalty_weight * 0.1 * fov_violation_target**2
+
+        # Kappa regularisation (prevent over-confidence)
+        kappa = prediction[:, 3]
+        kappa_reg = self.uncertainty_reg * torch.relu(kappa - 100) ** 2
+
+        if torch.isnan(vmf_loss).any() or torch.isinf(vmf_loss).any():
+            bad = torch.nonzero(~torch.isfinite(vmf_loss)).flatten()
+            print("❌ NaN/Inf in vmf_loss; offending κ:",
+                  prediction[bad, 3].detach().cpu())
+
+        total = vmf_loss + pred_penalty + target_penalty + kappa_reg
+        if torch.isnan(total).any():
+            print("❌ NaN/Inf in total FoV loss")
+            print("   stats vmf", vmf_loss.min(), vmf_loss.max())
+            print("   stats κ  ", prediction[:, 3].min(), prediction[:, 3].max())
+
+        return total
+
+    def _evaluate(self, prediction: Tensor, target: Tensor) -> Tensor:
+        m = target.size(1)
+        k = torch.norm(prediction, dim=1)
+        dot = torch.sum(prediction * target, dim=1)
+        # use 50 instead of 100
+        elements = -self.log_cmk(m, k, kappa_switch=50.0) - dot
+        return elements
 
 
 class AngularOffsetReconstructionWithKappa(StandardLearnedTask):
@@ -235,8 +220,8 @@ class AngularOffsetReconstructionWithKappa(StandardLearnedTask):
     Specifically designed for MAGIC telescope constraints.
     """
     
-    default_target_labels = ["angular_offset"]
-    default_prediction_labels = [
+    default_target_labels: ClassVar[List[str]] = ["angular_offset"]
+    default_prediction_labels: ClassVar[List[str]] = [
         "x_offset_pred", 
         "y_offset_pred", 
         "z_offset_pred", 
@@ -249,9 +234,9 @@ class AngularOffsetReconstructionWithKappa(StandardLearnedTask):
         target_labels: Union[str, List[str]] = "angular_offset",
         prediction_labels: Optional[List[str]] = None,
         loss_function: Optional[LossFunction] = None,
-        transform_prediction_and_target: Optional[callable] = None,
-        transform_target: Optional[callable] = None,
-        transform_inference: Optional[callable] = None,
+        transform_prediction_and_target: Optional[Callable] = None,
+        transform_target: Optional[Callable] = None,
+        transform_inference: Optional[Callable] = None,
     ):
         """Initialize angular offset reconstruction task.
         
@@ -315,28 +300,55 @@ class AngularOffsetReconstructionWithKappa(StandardLearnedTask):
         Returns:
             Prediction tensor [batch_size, 4] = [x_offset, y_offset, z_offset, kappa]
         """
-        # Predict offset vector
-        offset_vector = self.offset_head(x)  # [batch_size, 3]
-        
-        # Calculate concentration parameter (kappa) from vector magnitude
-        # This encodes prediction confidence - longer vectors = higher confidence
-        vector_magnitude = torch.linalg.norm(offset_vector, dim=1)
-        
-        # Apply bounds to kappa for numerical stability
-        kappa = torch.clamp(vector_magnitude, min=0.1, max=50.0) + eps_like(x)
-        
-        # Normalize direction vector
-        direction = offset_vector / (vector_magnitude.unsqueeze(1) + eps_like(x))
-        
-        # Ensure z-component is positive (pointing forward from telescope)
-        # Flip if pointing backward to keep within reasonable bounds
-        z_component = direction[:, 2]
-        flip_mask = z_component < -0.5  # If pointing significantly backward
-        direction[flip_mask] = -direction[flip_mask]
-        
-        # Combine direction and concentration
+        # Check input
+        if torch.isnan(x).any():
+            print("🚨 NaN in INPUT to _forward!")
+            
+        # Check for corrupted weights
+        for name, param in self.offset_head.named_parameters():
+            if torch.isnan(param).any():
+                print(f"🚨 NaN in weight {name}!")
+                
+        # Single forward pass through offset head
+        offset_vector = self.offset_head(x)
+        if torch.isnan(offset_vector).any():
+            print("🚨 NaN in offset_vector!")
+
+        # --- κ calculation with smooth saturation -------------------------
+        kappa_fp32 = torch.linalg.vector_norm(offset_vector.float(), dim=1)
+        if torch.isnan(kappa_fp32).any():
+            print("🚨 NaN in raw kappa!")
+            
+        KAPPA_SAT = 300.0
+        kappa_fp32 = (KAPPA_SAT * kappa_fp32) / (kappa_fp32 + KAPPA_SAT)
+        if torch.isnan(kappa_fp32).any():
+            print("🚨 NaN in saturated kappa!")
+            
+        kappa = kappa_fp32.to(offset_vector.dtype) + eps_like(offset_vector[:, 0])
+        if torch.isnan(kappa).any():
+            print("🚨 NaN in final kappa!")
+
+        # ---- cheap on-the-fly debug: print every 100 forward calls -------
+        if self.training:
+            if not hasattr(self, "_dbg_counter"):
+                self._dbg_counter = 0
+            if self._dbg_counter % 100 == 0:          # once per 100 batches
+                print(
+                    f"[κ debug] step {self._dbg_counter:>5}  "
+                    f"min {kappa.min():6.2f}  max {kappa.max():6.2f}  "
+                    f"mean {kappa.mean():6.2f}"
+                )
+            self._dbg_counter += 1
+
+        # Normalize direction and create prediction
+        direction = offset_vector / kappa.unsqueeze(1)
+        if torch.isnan(direction).any():
+            print("🚨 NaN in direction!")
+            
         prediction = torch.cat([direction, kappa.unsqueeze(1)], dim=1)
-        
+        if torch.isnan(prediction).any():
+            print("🚨 NaN in final prediction!")
+            
         return prediction
     
     def shared_step(self, batch, batch_idx: int):
@@ -365,7 +377,7 @@ class AngularOffsetReconstructionWithKappa(StandardLearnedTask):
                 
                 # Check field-of-view violations
                 pred_angular_from_center = torch.acos(torch.clamp(pred_directions[:, 2], -1.0, 1.0))
-                fov_violations = (pred_angular_from_center > np.deg2rad(1.75)).float()
+                fov_violations = (pred_angular_from_center > np.deg2rad(2.50)).float()
                 
                 # Calculate metrics
                 metrics = {
@@ -376,12 +388,17 @@ class AngularOffsetReconstructionWithKappa(StandardLearnedTask):
                     "fov_violation_rate": torch.mean(fov_violations),
                 }
                 
-                # Log metrics to trainer logger (for W&B)
-                if hasattr(self, 'trainer') and self.trainer is not None and self.trainer.logger is not None:
-                    # Determine if we're in training or validation mode
-                    mode = "train" if self.training else "val"
-                    logged_metrics = {f"{mode}_{k}": v.item() for k, v in metrics.items()}
-                    self.trainer.logger.log_metrics(logged_metrics, step=self.trainer.global_step)
+                # Lightning-native logging so loggers (incl. W&B) always pick them up
+                mode = "train" if self.training else "val"
+                for k, v in metrics.items():
+                    self.log(
+                        name=f"{mode}_{k}",
+                        value=v,
+                        on_step=False,
+                        on_epoch=True,
+                        prog_bar=False,
+                        sync_dist=True,
+                    )
                 
                 # Also store on outputs for backward compatibility
                 for k, v in metrics.items():
@@ -422,8 +439,8 @@ def create_angular_offset_model(backbone, detector):
         hidden_size=backbone.nb_outputs,
         target_labels="angular_offset",
         loss_function=MAGICFieldOfViewLoss(
-            fov_radius_deg=1.75,  # MAGIC 3.5° FoV
-            fov_penalty_weight=100.0,
+            fov_radius_deg=2.50,  # MAGIC 3.5° FoV
+            fov_penalty_weight=2000.0,
             uncertainty_regularization=0.01
         )
     )

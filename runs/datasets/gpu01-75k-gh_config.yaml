@@ -1,0 +1,36 @@
+path: /scratch/jagre/LMDB_75k_gh/za05to35.lmdb
+graph_definition:
+  arguments:
+    columns: [0, 1, 2]
+    detector:
+      arguments: {}
+      class_name: MAGICDetectorFixed
+    dtype: torch.float32
+    nb_nearest_neighbours: 8
+    node_definition:
+      arguments: {}
+      class_name: NodesAsPulses
+    input_feature_names: ['x_cam', 'y_cam', 'tel_id', 't', 'signal']
+  class_name: KNNGraph
+pulsemaps:
+  - total
+features:
+  - x_cam
+  - y_cam
+  - tel_id
+  - t
+  - signal
+truth:
+  - particle_id
+  - true_energy
+  - true_theta
+  - true_phi
+  - telescope_phi
+  - telescope_theta
+index_column: event_id
+truth_table: truth
+seed: 21
+selection:
+  test: "event_id % 10 == 0 and particle_id == 1"
+  validation: "event_id % 10 == 1 and particle_id == 1"
+  train: "event_id % 10 > 1 and particle_id == 1"

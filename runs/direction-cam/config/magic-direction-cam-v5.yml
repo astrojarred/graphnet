@@ -1,0 +1,66 @@
+# File: notebooks/magic-lmdb/direction-angular/base_final_push.yml
+arguments:
+  graph_definition:
+    ModelConfig:
+      class_name: KNNGraph
+      arguments:
+        detector:
+          ModelConfig:
+            class_name: MAGICDetectorFixed
+            arguments: {}
+        node_definition:
+          ModelConfig:
+            class_name: MAGICLimitedNodes
+            arguments:
+              max_pulses: 4096
+              sampling_strategy: "minmax"
+        columns: [0, 1, 2, 3]
+        nb_nearest_neighbours: 8
+  backbone:
+    ModelConfig:
+      class_name: MagicDeepSky
+      arguments:
+        hidden_dim: 192
+        seq_length: 192
+        depth: 12
+        head_size: 64
+        n_rel: 4
+        scaled_emb: true
+        n_features: 5
+        include_dynedge: true
+        dynedge_args:
+          nb_inputs: 5
+          nb_neighbours: 8
+          post_processing_layer_sizes: [84, 96]
+          activation_layer: gelu
+          add_norm_layer: true
+          skip_readout: true
+  tasks:
+    - ModelConfig:
+        class_name: CameraPlaneReconstruction
+        arguments:
+          train_parquet_path: /afs/ipp-garching.mpg.de/home/j/jagre/graphnet-i/graphnet/weighting_table.parquet
+          hidden_size: 192
+          target_labels: [true_source_camera_position, telescope_theta, true_energy, distance_from_center]
+          loss_function:
+            ModelConfig:
+              class_name: MAGICEuclideanDistanceLoss
+              arguments: {}
+  optimizer_class: '!class torch.optim.adamw AdamW'
+  optimizer_kwargs:
+    lr: 2e-4  # 4x higher than current
+    weight_decay: 0.05
+    eps: 1e-8
+  scheduler_class: '!class torch.optim.lr_scheduler OneCycleLR'
+  scheduler_kwargs:
+    max_lr: 2e-4
+    pct_start: 0.25  # 25% warmup, then 75% decay
+    total_steps: 43228  # 4 * your T_0, adjust based on actual training length
+    anneal_strategy: 'cos'
+    div_factor: 20.0    # Start at lr/20 = 1e-5
+    final_div_factor: 100.0  # End at lr/2000 = 1e-7
+    steps_per_epoch: 10807
+  scheduler_config:
+    frequency: 1
+    interval: step
+class_name: StandardModel

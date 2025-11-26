@@ -7,6 +7,7 @@ Kaggle competition.
 
 Solution by DrHB: https://github.com/DrHB/icecube-2nd-place
 """
+
 import torch
 import torch.nn as nn
 from typing import Set, Dict, Any
@@ -76,9 +77,7 @@ class DeepIce(GNN):
         self.rel_pos = SpacetimeEncoder(head_size)
         self.sandwich = nn.ModuleList(
             [
-                Block_rel(
-                    input_dim=hidden_dim, num_heads=hidden_dim // head_size
-                )
+                Block_rel(input_dim=hidden_dim, num_heads=hidden_dim // head_size)
                 for _ in range(depth_rel)
             ]
         )
@@ -126,9 +125,7 @@ class DeepIce(GNN):
 
     def forward(self, data: Data) -> Tensor:
         """Apply learnable forward pass."""
-        x0, mask, seq_length = array_to_sequence(
-            data.x, data.batch, padding_value=0
-        )
+        x0, mask, seq_length = array_to_sequence(data.x, data.batch, padding_value=0)
         x = self.fourier_ext(x0, seq_length)
         rel_pos_bias = self.rel_pos(x0)
         batch_size = mask.shape[0]
@@ -147,18 +144,14 @@ class DeepIce(GNN):
 
         mask = torch.cat(
             [
-                torch.ones(
-                    batch_size, 1, dtype=mask.dtype, device=mask.device
-                ),
+                torch.ones(batch_size, 1, dtype=mask.dtype, device=mask.device),
                 mask,
             ],
             1,
         )
         attn_mask = torch.zeros(mask.shape, device=mask.device)
         attn_mask[~mask] = -torch.inf
-        cls_token = self.cls_token.weight.unsqueeze(0).expand(
-            batch_size, -1, -1
-        )
+        cls_token = self.cls_token.weight.unsqueeze(0).expand(batch_size, -1, -1)
         x = torch.cat([cls_token, x], 1)
 
         for blk in self.blocks:

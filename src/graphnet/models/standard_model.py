@@ -1,10 +1,11 @@
 """Standard model class(es)."""
 
-from typing import Any, Dict, List, Optional, Union, Type
+from typing import Dict, List, Optional, Union, Type, Set
 import torch
 from torch import Tensor
 from torch_geometric.data import Data
 from torch.optim import Adam
+from torch_scatter import scatter_mean
 
 from graphnet.models.gnn.gnn import GNN
 from .easy_model import EasySyntax
@@ -73,6 +74,36 @@ class StandardModel(EasySyntax):
         """Compute and sum losses across tasks."""
         data_merged = {}
         target_labels_merged = list(set(self.target_labels))
+        additional_keys: Set[str] = set()
+        for task in self._tasks:
+            additional_keys.update(getattr(task, "additional_batch_keys", []))
+
+        def _get_data_attr(d: Data, key: str) -> Tensor:
+            if hasattr(d, key):
+                return getattr(d, key)
+            return d[key]
+
+        def _as_tensor(value: Tensor | float | int, like: Tensor | None = None) -> Tensor:
+            if isinstance(value, Tensor):
+                return value
+            device = like.device if isinstance(like, Tensor) else None
+            return torch.as_tensor(value, device=device)
+
+        def _gather_event_values(d: Data, key: str) -> Tensor:
+            value = _as_tensor(_get_data_attr(d, key))
+            if value.dim() == 0:
+                return value.view(1)
+            expected = getattr(d, "num_graphs", None)
+            if expected is None or value.shape[0] == expected:
+                return value
+            if hasattr(d, "batch"):
+                batch_idx = d.batch
+                if value.shape[0] == batch_idx.shape[0]:
+                    return scatter_mean(value, batch_idx, dim=0)
+            raise ValueError(
+                f"Unable to align additional batch key '{key}' with event dimension."
+            )
+
         for label in target_labels_merged:
             data_merged[label] = torch.cat([d[label] for d in data], dim=0)
         for task in self._tasks:
@@ -80,6 +111,11 @@ class StandardModel(EasySyntax):
                 data_merged[task._loss_weight] = torch.cat(
                     [d[task._loss_weight] for d in data], dim=0
                 )
+        for key in additional_keys:
+            if key in data_merged:
+                continue
+            per_graph_values = [_gather_event_values(d, key) for d in data]
+            data_merged[key] = torch.cat(per_graph_values, dim=0)
 
         losses = [
             task.compute_loss(pred, data_merged)

@@ -1,0 +1,64 @@
+# File: notebooks/magic-lmdb/direction-angular/base_final_push.yml
+arguments:
+  graph_definition:
+    ModelConfig:
+      class_name: KNNGraph
+      arguments:
+        detector:
+          ModelConfig:
+            class_name: MAGICDetectorFixed
+            arguments: {}
+        node_definition:
+          ModelConfig:
+            class_name: MAGICLimitedNodes
+            arguments:
+              max_pulses: 2048
+              sampling_strategy: "minmax"
+        columns: [0, 1, 2, 3]
+        nb_nearest_neighbours: 8
+  backbone:
+    ModelConfig:
+      class_name: MagicDeepSky
+      arguments:
+        hidden_dim: 192
+        seq_length: 192
+        depth: 6
+        head_size: 64
+        n_rel: 4
+        scaled_emb: true
+        n_features: 7
+        include_dynedge: true
+        dynedge_args:
+          nb_inputs: 7
+          nb_neighbours: 8
+          post_processing_layer_sizes: [84, 96]
+          activation_layer: gelu
+          add_norm_layer: true
+          skip_readout: true
+  tasks:
+    - ModelConfig:
+        arguments:
+          hidden_size: 192
+          loss_function:
+            ModelConfig:
+              class_name: LogCoshLoss
+              arguments: {}
+          target_labels: [true_energy]
+          train_parquet_path: /afs/ipp-garching.mpg.de/home/j/jagre/graphnet-i/graphnet/weighting_table.parquet
+          transform_target: '!lambda x: torch.log10(x)'
+          transform_inference: '!lambda x: torch.pow(10,x)'
+        class_name: MAGICEnergyReconstruction
+  optimizer_class: '!class torch.optim.adamw AdamW'
+  optimizer_kwargs:
+    lr: 5e-5
+    weight_decay: 0.05
+  scheduler_class: '!class torch.optim.lr_scheduler CosineAnnealingWarmRestarts'
+  # scheduler_class: '!class torch.optim.lr_scheduler CosineAnnealingLR'
+  scheduler_kwargs:
+    # T_max: 16210   
+    T_0: 2048
+    T_mult: 2
+    eta_min: 2e-7             
+  scheduler_config:
+    interval: step
+class_name: StandardModel

@@ -1,0 +1,544 @@
+from __future__ import annotations
+
+from typing import List, Union, Optional, Callable, ClassVar, Dict
+
+import torch
+from torch import Tensor
+from torch.nn import functional as F
+from torch_geometric.data import Data
+from pytorch_lightning.callbacks import Callback
+
+from graphnet.training.loss_functions import LossFunction
+from graphnet.models.task import StandardLearnedTask
+# from graphnet.models.task.task import LearnedTask
+from graphnet.utilities.maths import eps_like
+from graphnet.training.labels import Label
+
+__all__ = [
+    "MAGICEuclideanDistanceLoss", 
+    "TrueSourceCameraPosition",
+    "CameraPlaneReconstruction",
+    "Loc0LocToCam",
+    "Loc0CamToLoc",
+]
+
+class TrueSourceCameraPosition(Label):
+    """Produces a 2-component target tensor in relative camera plane coordinates:
+        [camera_x, camera_y]
+
+    Args:
+        telescope_phi_key: Key for telescope phi
+        telescope_theta_key: Key for telescope theta
+        true_phi_key: Key for true phi
+        true_theta_key: Key for true theta
+        is_mc: Whether the data is Monte Carlo
+        max_angle_deg: Maximum angle in degrees
+        dist_cam: Distance between camera and mirror plane [m]
+
+    Default dist_cam is based on the maximum FoV diameter of max_angle_deg = 2.5 degrees, 
+        calculated like so: 1 / torch.tan(torch.deg2rad(max_angle_deg))
+    """
+    def __init__(
+        self, 
+        telescope_theta_key: str = "telescope_theta", 
+        telescope_phi_key: str = "telescope_phi", 
+        true_theta_key: str = "true_theta",
+        true_phi_key: str = "true_phi",
+        is_mc: bool = True,
+        max_angle_deg: int | float | None = 2.5,
+        dist_cam: int | float | torch.Tensor | None = None,
+        key: str = "true_source_camera_position"
+    ):
+        super().__init__(key=key)
+        self.telescope_theta_key = telescope_theta_key
+        self.telescope_phi_key = telescope_phi_key
+        self.true_theta_key = true_theta_key
+        self.true_phi_key = true_phi_key
+
+        if not dist_cam:
+            max_angle_rad = torch.deg2rad(torch.tensor(max_angle_deg))
+            max_XC = torch.tan(max_angle_rad)  # Maximum XC value (dimensionless)
+            dist_cam = 1 / max_XC
+        
+        self.is_mc = is_mc
+        self.max_angle_deg = max_angle_deg
+        self.dist_cam = dist_cam
+
+    def __call__(self, graph: Data) -> torch.Tensor:
+        telescope_theta = graph[self.telescope_theta_key]
+        telescope_phi = graph[self.telescope_phi_key]
+        true_theta = graph[self.true_theta_key]
+        true_phi = graph[self.true_phi_key]
+
+        dist_cam = torch.as_tensor(
+            self.dist_cam,
+            device=telescope_phi.device,
+            dtype=telescope_phi.dtype,
+        )
+
+        if self.is_mc:
+            used_true_phi = corsika_to_drive(true_phi)
+            used_telescope_phi = corsika_to_drive(telescope_phi)
+        else:
+            used_true_phi = true_phi
+            used_telescope_phi = telescope_phi
+
+        source_cam_x, source_cam_y = Loc0LocToCam(
+            telescope_theta, used_telescope_phi,
+            true_theta, used_true_phi,
+            dist_cam
+        )
+        
+        return torch.stack((source_cam_x, source_cam_y), dim=1)
+
+class AirmassBin(Label):
+    """Produces a 1-component target tensor in airmass bin:
+        [airmass_bin]
+
+    Args:
+        telescope_theta_key: Key for telescope theta
+
+    Default dist_cam is based on the maximum FoV diameter of max_angle_deg = 2.5 degrees, 
+        calculated like so: 1 / torch.tan(torch.deg2rad(max_angle_deg))
+    """
+    def __init__(
+        self, 
+        telescope_theta_key: str = "telescope_theta", 
+        key: str = "airmass_bin"
+    ):
+        super().__init__(key=key)
+        self.telescope_theta_key = telescope_theta_key
+
+    def __call__(self, graph: Data) -> torch.Tensor:
+        telescope_theta = graph[self.telescope_theta_key]
+
+        # TODO: REPLACE WITH AIRMASS FUNCTIONAL FORM
+        airmass = torch.cos(telescope_theta)
+        
+        # return torch.stack((source_cam_x, source_cam_y), dim=1)
+        return torch.tensor(airmass, dtype=torch.float32)
+
+class MAGICEuclideanDistanceLoss(LossFunction):
+    """Euclidean distance loss."""
+    def __init__(self):
+        super().__init__()
+    
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        return torch.linalg.vector_norm(prediction - target, dim=1)
+
+class CameraPlaneReconstruction(StandardLearnedTask):
+    """Simplified camera plane reconstruction without uncertainties.
+    
+    Works with TrueSourceCameraPosition label that produces a 2-component tensor.
+    
+    Use this if you want to test performance without uncertainty estimation.
+    
+    Target format:
+    - true_source_camera_position: [batch_size, 2] (x, y)
+    - true_energy: [batch_size, 1] (true_energy)
+    - Combined target passed to loss: [batch_size, 3] (x, y, true_energy)
+    """
+
+    # Updated to use the new 2-component tensor format
+    # default_target_labels: ClassVar[List[str]] = ["true_source_camera_position", "true_energy"]
+    default_target_labels: ClassVar[List[str]] = ["true_source_camera_position"]
+    default_prediction_labels: ClassVar[List[str]] = ["camera_x_pred", "camera_y_pred"]
+    nb_inputs: ClassVar[int] = 2
+
+    def __init__(
+        self, 
+        hidden_size: int,
+        # target_labels: Union[str, List[str]] = ["true_source_camera_position", "true_energy"],
+        target_labels: Union[str, List[str]] = ["true_source_camera_position"],
+        prediction_labels: Optional[List[str]] = None,
+        loss_function: Optional[LossFunction] = None,
+        transform_prediction_and_target: Optional[Callable] = None,
+        transform_target: Optional[Callable] = None,
+        transform_inference: Optional[Callable] = None,
+        angular_weight_coeff: Optional[float] = None,
+        squash: bool = False,
+        coord_range: float = 1.5
+    ):
+        """Initialize camera plane reconstruction task.
+        
+        Args:
+            coord_range: Maximum coordinate value (coordinates clamped to [-coord_range, +coord_range])
+        """
+        super().__init__(
+            hidden_size=hidden_size,
+            target_labels=target_labels,
+            prediction_labels=prediction_labels,
+            loss_function=loss_function,
+            transform_prediction_and_target=transform_prediction_and_target,
+            transform_target=transform_target,
+            transform_inference=transform_inference,
+        )
+        self.coord_range = coord_range
+        self.squash = squash
+        self.angular_weight_coeff = angular_weight_coeff
+
+    def _forward(self, x: Tensor) -> Tensor:
+        """Transform to clamped camera coordinates.
+        
+        Args:
+            x: Raw network outputs [batch_size, 2] (x, y)
+            
+        Returns:
+            [batch_size, 2] clamped camera coordinates
+            
+        Note:
+            GraphNeT automatically concatenates target labels into [batch_size, 3] format:
+            [camera_x, camera_y, true_energy] for the loss function.
+        """
+        # Extract coordinates and uncertainties
+        raw_x = x[:, 0]
+        raw_y = x[:, 1]
+
+        # Same smooth squashing as above to retain gradients for out-of-range values
+        if self.squash:
+            camera_x = torch.tanh(raw_x / self.coord_range) * self.coord_range
+            camera_y = torch.tanh(raw_y / self.coord_range) * self.coord_range
+        else:
+            camera_x = raw_x
+            camera_y = raw_y
+        
+        return torch.stack((camera_x, camera_y), dim=1)
+
+    def coordinate_range_info(self) -> dict:
+        """Return information about the coordinate system."""
+        return {
+            "coord_range": f"[-{self.coord_range}, +{self.coord_range}]",
+            "nominal_fov": "±1.0 corresponds to ±2.5°",
+            "extended_range": f"±{self.coord_range} corresponds to ±{2.5 * self.coord_range}°",
+            "center": "(0, 0) = camera center",
+        }
+
+    def compute_loss(self, pred: Tensor, data: Data) -> Tensor:
+        # Prediction is already [batch,2]
+        coords_pred = pred
+        # Extract 2D target and energy, ensure energy is [batch,1]
+        target = data[self.default_target_labels[0]]
+        # Handle optional loss weight
+        weights = data[self._loss_weight] if self._loss_weight is not None else None
+        # Compute and return loss
+        # per–event distance  (shape: [batch])
+        per_event_loss = self._loss_function(coords_pred, target, weights=weights, return_elements=True)
+
+        if self.angular_weight_coeff is not None:
+            r              = target.norm(dim=1) + 1e-6                  # camera radius
+            # Huber-like weight:  w(r) = r / (r0 + r)  →  ≈0 for small r, ≈1 for large r
+            r0             = self.angular_weight_coeff
+            weights_theta  = r / (r0 + r)
+            per_event_loss = per_event_loss * weights_theta       # up-weight edge events
+
+        data_loss = per_event_loss.mean()                         # normalise over batch
+        loss      = data_loss + self._regularisation_loss   
+
+        return loss
+
+
+def corsika_to_drive(phi):
+    #  (works for any tensor shape, keeps radians)
+    return (torch.pi - phi) % (2*torch.pi)
+
+def drive_to_corsika(phi_astro):
+    # The transform is its own inverse
+    return (torch.pi - phi_astro)
+
+# coordinate transformation functions
+def Loc0LocToCam(
+    theta0: torch.Tensor,
+    phi0: torch.Tensor,
+    theta: torch.Tensor,
+    phi: torch.Tensor,
+    dist_cam: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Convert from local coordinates to camera coordinates using torch.
+    """
+    # Trigonometric functions
+    sin_theta0 = torch.sin(theta0)
+    cos_theta0 = torch.cos(theta0)
+    sin_theta = torch.sin(theta)
+    cos_theta = torch.cos(theta)
+
+    # Angular difference
+    phi_diff = phi - phi0
+
+    # Denominator of projection formula
+    denominator = cos_theta0 * cos_theta + sin_theta0 * sin_theta * torch.cos(phi_diff)
+
+    # Camera coordinates (unscaled)
+    XC = -sin_theta * torch.sin(phi_diff) / denominator
+    YC = (-sin_theta0 * cos_theta + cos_theta0 * sin_theta * torch.cos(phi_diff)) / denominator
+
+    # Apply distance scaling
+    return XC * dist_cam, YC * dist_cam
+
+
+def Loc0CamToLoc(
+    theta0: torch.Tensor,
+    phi0: torch.Tensor,
+    x_cam: torch.Tensor,
+    y_cam: torch.Tensor,
+    dist_cam: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Convert from camera coordinates to local sky coordinates using torch.
+    """
+    # Normalize camera coords
+    XC = x_cam / dist_cam
+    YC = y_cam / dist_cam
+
+    # Telescope pointing
+    sin_theta0 = torch.sin(theta0)
+    cos_theta0 = torch.cos(theta0)
+
+    # Intermediate variables
+    sip = -XC
+    cop = sin_theta0 + YC * cos_theta0
+    sit = torch.sqrt(cop * cop + XC * XC)
+    cot = cos_theta0 - YC * sin_theta0
+
+    # Ambiguity resolution (elementwise)
+    cond = torch.abs(theta0 - torch.pi/2) > torch.pi/4
+    theta1 = torch.atan2(sit, torch.copysign(cot, cos_theta0))
+    theta2 = torch.atan2(sit, torch.copysign(cot, cop / cot))
+    theta = torch.where(cond, theta1, theta2)
+
+    # Azimuth difference calculation
+    sig = torch.sign(cot * torch.tan(theta))
+    phiminphi0 = torch.atan2(sig * sip, sig * cop)
+
+    return theta, phi0 + phiminphi0 
+
+
+class AngularSeparationLogger(Callback):
+    """Compute and log angular‐resolution metrics during validation.
+
+    This re-implementation mirrors the robust structure of
+    `ValidationAngularResolutionLogger` but is tailored to models that predict
+    2-D camera-plane coordinates (x_cam, y_cam).  These coordinates are
+    converted back to sky directions using `Loc0CamToLoc`, after which the
+    angular separation to the true shower direction is computed.
+    """
+
+    def __init__(
+        self,
+        log_every_n_batches: int = 1,
+        accumulate_over_epoch: bool = True,
+        *,
+        is_mc: bool = True,
+        dist_cam: float = 22.9038,
+        true_theta_key: str = "true_theta",
+        true_phi_key: str = "true_phi",
+        telescope_theta_key: str = "telescope_theta",
+        telescope_phi_key: str = "telescope_phi",
+    ) -> None:
+        super().__init__()
+
+        # Logging / accumulation behaviour
+        self.log_every_n_batches = log_every_n_batches
+        self.accumulate_over_epoch = accumulate_over_epoch
+
+        # Meta-data keys & conventions
+        self.is_mc = is_mc
+        self.dist_cam = dist_cam
+        self.true_theta_key = true_theta_key
+        self.true_phi_key = true_phi_key
+        self.telescope_theta_key = telescope_theta_key
+        self.telescope_phi_key = telescope_phi_key
+
+        # Storage for accumulated errors
+        self.val_angular_errors: list[float] = []
+
+    # ---------------------------------------------------------------------
+    # Helper utilities
+    # ---------------------------------------------------------------------
+    def _aggregate_node_predictions(
+        self, pred_coords: torch.Tensor, batch: Data
+    ) -> torch.Tensor:
+        """Aggregate node-level predictions to event level (mean)."""
+        graph_idx = getattr(batch, "batch", None)  # type: ignore[attr-defined]
+        if graph_idx is None or pred_coords.shape[0] != graph_idx.shape[0]:
+            # Already event-level or we cannot aggregate
+            return pred_coords
+
+        num_graphs = int(torch.max(graph_idx).item() + 1)
+        summed = torch.zeros(
+            (num_graphs, pred_coords.shape[1]),
+            device=pred_coords.device,
+            dtype=pred_coords.dtype,
+        )
+        summed.index_add_(0, graph_idx, pred_coords)
+        counts = torch.bincount(graph_idx, minlength=num_graphs).view(-1, 1).clamp(min=1)
+        return summed / counts
+
+    def _to_cartesian(self, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
+        """Convert spherical angles to unit Cartesian vectors."""
+        return torch.stack(
+            [
+                torch.sin(theta) * torch.cos(phi),  # x
+                torch.sin(theta) * torch.sin(phi),  # y
+                torch.cos(theta),  # z
+            ],
+            dim=1,
+        )
+
+    def _compute_angular_errors(
+        self, pred_dirs: torch.Tensor, true_dirs: torch.Tensor
+    ) -> torch.Tensor:
+        """Return per-event angular error in degrees."""
+        dot_products = torch.sum(pred_dirs * true_dirs, dim=1).clamp(-1.0 + 1e-7, 1.0 - 1e-7)
+        ang_rad = torch.acos(dot_products)
+        return torch.rad2deg(ang_rad)
+
+    def _extract_directions(
+        self, batch: Data, predictions: torch.Tensor | list[torch.Tensor]
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Convert predictions & truth into Cartesian direction vectors."""
+        # ------------------------------------------------------------------
+        # Predicted directions from camera coordinates
+        # ------------------------------------------------------------------
+        pred_coords: torch.Tensor
+        if isinstance(predictions, list):
+            pred_coords = predictions[0]
+        else:
+            pred_coords = predictions
+
+        # Ensure we work with (N_events, 2)
+        pred_coords = self._aggregate_node_predictions(pred_coords, batch)
+
+        if pred_coords.shape[1] < 2:
+            # Cannot interpret prediction tensor
+            return None, None
+
+        # Telescope pointing
+        tel_theta = batch[self.telescope_theta_key]
+        tel_phi = batch[self.telescope_phi_key]
+
+        # Confirm event-level alignment
+        if pred_coords.shape[0] != tel_theta.shape[0]:
+            return None, None
+
+        # Device / dtype alignment
+        dist_cam_tensor = torch.as_tensor(self.dist_cam, device=tel_theta.device, dtype=tel_theta.dtype)
+
+        tel_phi_astro = corsika_to_drive(tel_phi) if self.is_mc else tel_phi
+
+        # Camera->sky conversion
+        pred_theta, pred_phi_astro = Loc0CamToLoc(
+            tel_theta,
+            tel_phi_astro,
+            pred_coords[:, 0],
+            pred_coords[:, 1],
+            dist_cam_tensor,
+        )
+
+        # ------------------------------------------------------------------
+        # True directions
+        # ------------------------------------------------------------------
+        true_theta = batch[self.true_theta_key]
+        true_phi = batch[self.true_phi_key]
+        true_phi_astro = corsika_to_drive(true_phi) if self.is_mc else true_phi
+
+        # Convert both to Cartesian unit vectors
+        pred_dirs = self._to_cartesian(pred_theta.flatten(), pred_phi_astro.flatten())
+        true_dirs = self._to_cartesian(true_theta.flatten(), true_phi_astro.flatten())
+
+        return pred_dirs, true_dirs
+
+    # ------------------------------------------------------------------
+    # Lightning hooks
+    # ------------------------------------------------------------------
+    def on_validation_epoch_start(self, trainer, pl_module):  # type: ignore[override]
+        if self.accumulate_over_epoch:
+            self.val_angular_errors = []
+
+    def on_validation_batch_end(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch: Data,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ):  # type: ignore[override]
+        # decide whether to compute metrics for this batch
+        should_log = batch_idx % self.log_every_n_batches == 0
+
+        with torch.no_grad():
+            predictions = pl_module(batch)
+            pred_dirs, true_dirs = self._extract_directions(batch, predictions)
+
+            if pred_dirs is None or true_dirs is None:
+                return  # cannot evaluate this batch
+
+            angular_errors_deg = self._compute_angular_errors(pred_dirs, true_dirs)
+
+            # Accumulate for epoch metrics
+            if self.accumulate_over_epoch:
+                self.val_angular_errors.extend(angular_errors_deg.cpu().tolist())
+
+            # Log batch metrics if requested
+            if not should_log or angular_errors_deg.numel() == 0:
+                return
+
+            median = torch.median(angular_errors_deg).item()
+            mean = torch.mean(angular_errors_deg).item()
+            pct68 = torch.quantile(angular_errors_deg, 0.68).item()
+            pct95 = torch.quantile(angular_errors_deg, 0.95).item()
+
+            metrics = {
+                "val_angular_median_deg": median,
+                "val_angular_mean_deg": mean,
+                "val_angular_68pct_deg": pct68,
+                "val_angular_95pct_deg": pct95,
+            }
+
+            # Determine batch size correctly (list of graphs vs. single graph)
+            batch_size = len(batch) if isinstance(batch, list) else 1
+
+            for name, value in metrics.items():
+                pl_module.log(
+                    name,
+                    value,
+                    on_step=True,
+                    on_epoch=False,
+                    prog_bar=False,
+                    batch_size=batch_size,
+                    add_dataloader_idx=False,
+                    sync_dist=True,
+                )
+
+    def on_validation_epoch_end(self, trainer, pl_module):  # type: ignore[override]
+        if not self.accumulate_over_epoch or len(self.val_angular_errors) == 0:
+            return
+
+        errors = torch.tensor(self.val_angular_errors, device=pl_module.device)
+
+        epoch_metrics = {
+            "val_angular_median_deg_epoch": torch.median(errors).item(),
+            "val_angular_mean_deg_epoch": torch.mean(errors).item(),
+            "val_angular_68pct_deg_epoch": torch.quantile(errors, 0.68).item(),
+            "val_angular_95pct_deg_epoch": torch.quantile(errors, 0.95).item(),
+            "val_angular_std_deg_epoch": torch.std(errors).item(),
+        }
+
+        for thresh in [0.1, 0.2, 0.5, 1.0, 2.0]:
+            frac = torch.mean((errors < thresh).float()).item()
+            epoch_metrics[f"val_angular_sub_{thresh:.1f}deg_epoch"] = frac
+
+        for name, value in epoch_metrics.items():
+            pl_module.log(
+                name,
+                value,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=(name == "val_angular_68pct_deg_epoch"),
+                add_dataloader_idx=False,
+                sync_dist=True,
+            )
+
+        # reset storage
+        self.val_angular_errors = []

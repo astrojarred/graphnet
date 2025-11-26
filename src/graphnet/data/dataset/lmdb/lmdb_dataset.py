@@ -340,14 +340,16 @@ class LMDBDataset(Dataset):
                 f"Index {sequential_index} not in range [0, {len(self) - 1}]"
             )
 
-        # update key if there is a selection criteria
-        if self._selection is not None:
-            # get the event_id at that position in _indices
+        # Resolve LMDB key robustly: map dataset position -> event_id -> LMDB key
+        # Prefer the event_id mapping if available; fall back to raw index otherwise.
+        try:
             event_id = self._indices[sequential_index]
-            # get the og sequential index from _event_id_to_idx
-            effective_sequential_index = self._event_id_to_idx[event_id]
-        else:
-            effective_sequential_index = sequential_index
+        except Exception:
+            raise IndexError(f"Index {sequential_index} not in range [0, {len(self) - 1}]")
+
+        mapped_key = self._event_id_to_idx.get(event_id, None)
+        # Start with mapped key if present; otherwise use sequential index as fallback
+        effective_sequential_index = mapped_key if mapped_key is not None else sequential_index
 
         # Connect to database
         self._lazy_connect()
@@ -358,8 +360,14 @@ class LMDBDataset(Dataset):
         try:
             with self._env.begin() as txn:
                 serialized_data = txn.get(key)
-                if serialized_data is None:
-                    raise IndexError(f"No data found for event {sequential_index}")
+                if serialized_data is None and mapped_key is not None:
+                    # Fallback: try raw sequential index key in case mapping is stale
+                    fallback_key = str(sequential_index).encode("utf-8")
+                    serialized_data = txn.get(fallback_key)
+                    if serialized_data is None:
+                        raise IndexError(f"No data found for event_id {event_id}")
+                elif serialized_data is None:
+                    raise IndexError(f"No data found for index {effective_sequential_index}")
 
                 # Deserialize the Data object
                 data = self._deserialize(serialized_data)

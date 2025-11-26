@@ -18,7 +18,6 @@ from graphnet.training.parquet_weight_fitting import MAGICSystematicWeighter
 __all__ = [
     "MAGICEuclideanDistanceLoss",
     "TrueSourceCameraPosition",
-    "DistanceFromCenter",
     "CameraPlaneReconstruction",
     "CameraPlaneValidationLogger",
     "Loc0LocToCam",
@@ -94,75 +93,6 @@ class TrueSourceCameraPosition(Label):
 
         return torch.stack((source_cam_x, source_cam_y), dim=1)
 
-class DistanceFromCenter(Label):
-    """Produces a 1-component target tensor in relative camera plane coordinates:
-        [distance_from_center]
-
-    Args:
-        telescope_phi_key: Key for telescope phi
-        telescope_theta_key: Key for telescope theta
-        true_phi_key: Key for true phi
-        true_theta_key: Key for true theta
-        is_mc: Whether the data is Monte Carlo
-        max_angle_deg: Maximum angle in degrees
-        dist_cam: Distance between camera and mirror plane [m]
-
-    Default dist_cam is based on the maximum FoV diameter of max_angle_deg = 2.5 degrees,
-        calculated like so: 1 / torch.tan(torch.deg2rad(max_angle_deg))
-    """
-
-    def __init__(
-        self,
-        telescope_theta_key: str = "telescope_theta",
-        telescope_phi_key: str = "telescope_phi",
-        true_theta_key: str = "true_theta",
-        true_phi_key: str = "true_phi",
-        is_mc: bool = True,
-        max_angle_deg: int | float | None = 2.5,
-        dist_cam: int | float | torch.Tensor | None = None,
-        key: str = "distance_from_center",
-    ):
-        super().__init__(key=key)
-        self.telescope_theta_key = telescope_theta_key
-        self.telescope_phi_key = telescope_phi_key
-        self.true_theta_key = true_theta_key
-        self.true_phi_key = true_phi_key
-
-        if not dist_cam:
-            max_angle_rad = torch.deg2rad(torch.tensor(max_angle_deg))
-            max_XC = torch.tan(max_angle_rad)  # Maximum XC value (dimensionless)
-            dist_cam = 1 / max_XC
-
-        self.is_mc = is_mc
-        self.max_angle_deg = max_angle_deg
-        self.dist_cam = dist_cam
-
-    def __call__(self, graph: Data) -> torch.Tensor:
-        telescope_theta = graph[self.telescope_theta_key]
-        telescope_phi = graph[self.telescope_phi_key]
-        true_theta = graph[self.true_theta_key]
-        true_phi = graph[self.true_phi_key]
-
-        dist_cam = torch.as_tensor(
-            self.dist_cam,
-            device=telescope_phi.device,
-            dtype=telescope_phi.dtype,
-        )
-
-        if self.is_mc:
-            used_true_phi = corsika_to_drive(true_phi)
-            used_telescope_phi = corsika_to_drive(telescope_phi)
-        else:
-            used_true_phi = true_phi
-            used_telescope_phi = telescope_phi
-
-        source_cam_x, source_cam_y = Loc0LocToCam(
-            telescope_theta, used_telescope_phi, true_theta, used_true_phi, dist_cam
-        )
-
-        distance_from_center = torch.hypot(source_cam_x, source_cam_y)
-
-        return distance_from_center
 
 class MAGICEuclideanDistanceLoss(LossFunction):
     """Euclidean distance loss."""
@@ -201,7 +131,7 @@ class CameraPlaneReconstruction(StandardLearnedTask):
         train_parquet_path: Optional[str] = None,
         zenith_key: str = "telescope_theta",
         energy_key: str = "true_energy",
-        offset_key: str = "distance_from_center",
+        offset_key: str = "pointing_offset",
         zenith_bins: int = 60,
         energy_bins: int = 35,
         offset_bins: int = 50
@@ -257,7 +187,13 @@ class CameraPlaneReconstruction(StandardLearnedTask):
     def _compute_systematic_weights(self, data: Data) -> Optional[Tensor]:
         if self.systematic_weighter is None:
             return None
-        return self.systematic_weighter.get_weights_for_batch(data)
+        return self.systematic_weighter.get_weights_for_batch(
+            {
+                self.zenith_key:  data[self.zenith_key],
+                self.energy_key:  data[self.energy_key],
+                self.offset_key:  data[self.offset_key],
+            }
+        )
 
     def _forward(self, x: Tensor) -> Tensor:
         """Transform to camera coordinates.
@@ -611,14 +547,14 @@ class CameraPlaneValidationLogger(Callback):
                     fraction
                 )
 
-            # pl_module.log(
-            #     "val_angular_68pct_deg_epoch",
-            #     angular_epoch_metrics["val_angular_68pct_deg_epoch"],
-            #     on_step=False,
-            #     on_epoch=True,
-            #     prog_bar=True,
-            #     sync_dist=True,
-            # )
+            pl_module.log(
+                "val_angular_68pct_deg_epoch",
+                angular_epoch_metrics["val_angular_68pct_deg_epoch"],
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                sync_dist=True,
+            )
             pl_module.log_dict(
                 angular_epoch_metrics,
                 on_step=False,

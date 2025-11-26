@@ -51,4 +51,4 @@ class MagicDeepSky(DeepIce):
             mlp_dim=mlp_dim,
         )
 
-    # Forward is inherited unchanged from DeepIce; we only changed the encoder. 
+    # Forward is inherited unchanged from DeepIce; we only changed the encoder.

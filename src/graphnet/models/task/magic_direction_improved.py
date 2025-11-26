@@ -306,7 +306,7 @@ class MAGICLimitedNodes(NodeDefinition):
         self,
         input_feature_names: Optional[List[str]] = None,
         max_pulses: int = 512,
-        sampling_strategy: str = "signal",  # "signal", "time", "random"
+        sampling_strategy: str = "signal",  # "signal", "time", "random", "minmax"
         signal_name: str = "signal",
         time_name: str = "t",
     ) -> None:
@@ -320,6 +320,7 @@ class MAGICLimitedNodes(NodeDefinition):
                 - "signal": Keep pulses with highest signal
                 - "time": Keep earliest pulses  
                 - "random": Random sampling
+                - "minmax": Keep pulses with highest and lowest signal: 90% highest and 10% lowest
             signal_name: Name of the signal column for signal-based sampling.
             time_name: Name of the time column for time-based sampling.
         """
@@ -378,6 +379,15 @@ class MAGICLimitedNodes(NodeDefinition):
             # Keep earliest pulses
             _, indices = torch.topk(x[:, self.time_idx], self.max_pulses, largest=False)
             return indices.sort().values
+        
+        elif self.sampling_strategy == "minmax":
+            # Keep pulses with highest and lowest signal: 90% highest and 10% lowest
+            # Ensure total always equals max_pulses
+            n_high = int(np.floor(0.9 * self.max_pulses))
+            n_low = self.max_pulses - n_high  # Ensures exact sum equals max_pulses
+            _, indices = torch.topk(x[:, self.signal_idx], n_high, largest=True)
+            _, indices_min = torch.topk(x[:, self.signal_idx], n_low, largest=False)
+            return torch.cat([indices, indices_min]).sort().values
             
         else:  # random
             indices = torch.randperm(n_pulses)[:self.max_pulses]
