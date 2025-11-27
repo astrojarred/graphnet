@@ -81,6 +81,7 @@ EXTRAS_REQUIRE = {
         "torch_spline_conv",
         "pytorch-lightning>=2.0",
     ],
+    "lmdb": ["python-lmdb>=1.6.2"],
 }
 
 # https://pypi.org/classifiers/
@@ -108,8 +109,7 @@ setup(
     name="graphnet",
     version=versioneer.get_version(),
     description=(
-        "A common library for using deep learning in neutrino "
-        "telescope experiments."
+        "A common library for using deep learning in neutrino telescope experiments."
     ),
     license="Apache 2.0",
     author="The GraphNeT development team",
