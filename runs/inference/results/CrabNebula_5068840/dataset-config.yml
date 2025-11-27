@@ -1,0 +1,30 @@
+# path: /afs/ipp-garching.mpg.de/home/j/jagre/ptmp/output/CrabNebula_5068840.lmdb
+path: /run/user/54802/output/CrabNebula_5068840.lmdb
+graph_definition:
+  arguments:
+    columns: [0, 1, 2]
+    detector:
+      arguments: {}
+      class_name: MAGICDetectorFixed
+    dtype: torch.float32
+    nb_nearest_neighbours: 8
+    node_definition:
+      arguments: {}
+      class_name: NodesAsPulses
+    input_feature_names: ['x_cam', 'y_cam', 't', 'tel_id', 'signal', 'telescope_phi', 'telescope_theta']
+  class_name: KNNGraph
+pulsemaps:
+  - total
+features:
+  - x_cam
+  - y_cam
+  - t
+  - tel_id
+  - signal
+  - telescope_phi
+  - telescope_theta
+true_telescope:
+  class_name: TrueTelescopeLabel
+truth: []
+index_column: event_id
+selection: null

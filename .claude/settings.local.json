@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(/home/iwsatlas1/jgreen/micromamba/envs/graphnet-121-v3/bin/python magic_hybrid_direction_train.py --dataset-config configs/magic_dataset-dir-gammaonly-magicdl.yml --fast-dev-run --num-workers 0 --batch-size 2 --max-epochs 1 --gpus 0)",
+      "Bash(/home/iwsatlas1/jgreen/micromamba/envs/graphnet-121-v3/bin/python notebooks/magic-lmdb/direction-transformers/test_final_integration.py)",
+      "Bash(/home/iwsatlas1/jgreen/micromamba/envs/graphnet-121-v3/bin/python notebooks/magic-lmdb/direction-transformers/test_task_only.py)"
+    ],
+    "deny": []
+  }
+}

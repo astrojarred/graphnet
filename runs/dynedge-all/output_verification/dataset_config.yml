@@ -1,0 +1,33 @@
+features: [x_cam, y_cam, tel_id, t, signal]
+graph_definition:
+  arguments:
+    columns: [0, 1, 2]
+    detector:
+      arguments: {}
+      class_name: MAGICDetectorFixed
+    dtype: torch.float32
+    input_feature_names: [x_cam, y_cam, tel_id, t, signal]
+    nb_nearest_neighbours: 8
+    node_definition:
+      arguments: {}
+      class_name: NodesAsPulses
+  class_name: KNNGraph
+index_column: event_id
+labels: null
+loss_weight_column: null
+loss_weight_default_value: null
+loss_weight_table: null
+node_truth: null
+node_truth_table: null
+path: /scratch/jagre/LMDB_75k_gh/za05to35.lmdb
+pulsemaps: [total]
+seed: 21
+selection: {test_gamma: event_id % 5 == 0 & particle_id == 1, test_proton: 
+    event_id % 5 == 0 & particle_id == 14, train_gamma: event_id % 5 > 1 & 
+    particle_id == 1, train_proton: event_id % 5 > 1 & particle_id == 14, 
+    validation_gamma: event_id % 5 == 1 & particle_id == 1, validation_proton: 
+    event_id % 5 == 1 & particle_id == 14}
+string_selection: null
+truth: [particle_id, true_energy, true_theta, true_phi, telescope_phi, 
+    telescope_theta]
+truth_table: truth

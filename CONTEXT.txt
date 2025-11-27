@@ -1,0 +1,1913 @@
+TITLE: Energy Reconstruction Example with GraphNeT Configuration (Python)
+DESCRIPTION: This comprehensive example demonstrates a full energy reconstruction workflow in GraphNeT using configuration files. It covers importing necessary modules, loading model and dataset configurations, building the model, constructing data loaders, training the model, making predictions on a test set, and saving results and the trained model.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_16
+
+LANGUAGE: python
+CODE:
+```
+# Import(s)
+    import os
+
+    from graphnet.constants import CONFIG_DIR  # Local path to graphnet/configs
+    from graphnet.data.dataloader import DataLoader
+    from graphnet.models import Model
+    from graphnet.utilities.config import DatasetConfig, ModelConfig
+
+    # Configuration
+    dataset_config_path = f"{CONFIG_DIR}/datasets/training_example_data_sqlite.yml"
+    model_config_path = f"{CONFIG_DIR}/models/example_energy_reconstruction_model.yml"
+
+    # Build model
+    model_config = ModelConfig.load(model_config_path)
+    model = Model.from_config(model_config, trust=True)
+
+    # Construct dataloaders
+    dataset_config = DatasetConfig.load(dataset_config_path)
+    dataloaders = DataLoader.from_dataset_config(
+        dataset_config,
+        batch_size=16,
+        num_workers=1,
+    )
+
+    # Train model
+    model.fit(
+        dataloaders["train"],
+        dataloaders["validation"],
+        gpus=[0],
+        max_epochs=5,
+    )
+
+    # Predict on test set and return as pandas.DataFrame
+    results = model.predict_as_dataframe(
+        dataloaders["test"],
+        additional_attributes=model.target_labels + ["event_no"],
+    )
+
+    # Save predictions and model to file
+    outdir = "tutorial_output"
+    os.makedirs(outdir, exist_ok=True)
+    results.to_csv(f"{outdir}/results.csv")
+    model.save_state_dict(f"{outdir}/state_dict.pth")
+    model.save(f"{outdir}/model.pth")
+```
+
+----------------------------------------
+
+TITLE: Training and Predicting with GraphNeT for Energy Reconstruction (Python)
+DESCRIPTION: This comprehensive example demonstrates the full workflow for training a GraphNeT model for energy reconstruction. It covers loading model and dataset configurations, constructing data loaders, training the model, making predictions on a test set, and saving both the results and the trained model artifacts.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_24
+
+LANGUAGE: python
+CODE:
+```
+# Import(s)
+import os
+
+from graphnet.constants import CONFIG_DIR  # Local path to graphnet/configs
+from graphnet.data.dataloader import DataLoader
+from graphnet.models import Model
+from graphnet.utilities.config import DatasetConfig, ModelConfig
+
+# Configuration
+dataset_config_path = f"{CONFIG_DIR}/datasets/training_example_data_sqlite.yml"
+model_config_path = f"{CONFIG_DIR}/models/example_energy_reconstruction_model.yml"
+
+# Build model
+model_config = ModelConfig.load(model_config_path)
+model = Model.from_config(model_config, trust=True)
+
+# Construct dataloaders
+dataset_config = DatasetConfig.load(dataset_config_path)
+dataloaders = DataLoader.from_dataset_config(
+    dataset_config,
+    batch_size=16,
+    num_workers=1,
+)
+
+# Train model
+model.fit(
+    dataloaders["train"],
+    dataloaders["validation"],
+    gpus=[0],
+    max_epochs=5,
+)
+
+# Predict on test set and return as pandas.DataFrame
+results = model.predict_as_dataframe(
+    dataloaders["test"],
+    additional_attributes=model.target_labels + ["event_no"],
+)
+
+# Save predictions and model to file
+outdir = "tutorial_output"
+os.makedirs(outdir, exist_ok=True)
+results.to_csv(f"{outdir}/results.csv")
+model.save_state_dict(f"{outdir}/state_dict.pth")
+model.save(f"{outdir}/model.pth")
+```
+
+----------------------------------------
+
+TITLE: Training GraphNeT Models with Built-in Fit Method (Python)
+DESCRIPTION: This snippet demonstrates the simplified training process for GraphNeT `Model`s using the in-built `fit` method, similar to `sklearn`. It requires an initialized `Model` instance and a `DataLoader` for training data, and trains the model for a specified number of epochs.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_15
+
+LANGUAGE: python
+CODE:
+```
+model = Model(...)
+train_dataloader = DataLoader(...)
+model.fit(train_dataloader=train_dataloader, max_epochs=10)
+```
+
+----------------------------------------
+
+TITLE: Loading GraphNeT Model from Configuration and State Dictionary in Python
+DESCRIPTION: This snippet demonstrates how to reconstruct a GraphNeT model from a saved `ModelConfig` file and then load its trained weights from a `state_dict`. This two-step process ensures that the model's definition is loaded first, followed by its specific parameters, offering robust versioning.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_6
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.models import Model
+from graphnet.utilities.config import ModelConfig
+
+model_config = ModelConfig.load("model.yml")
+model = Model.from_config(model_config)  # With randomly initialised weights.
+model.load_state_dict("state_dict.pth")  # Now with trained weight.
+```
+
+----------------------------------------
+
+TITLE: Loading GraphNeT Model from Configuration and State Dictionary (Python)
+DESCRIPTION: This snippet shows how to reconstruct a GraphNeT `Model` by first loading its definition from a `ModelConfig` YAML file, which initializes the model with random weights. Subsequently, the trained weights are loaded from a `.pth` file using `load_state_dict`, restoring the complete trained model.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_22
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.models import Model
+from graphnet.utilities.config import ModelConfig
+
+model_config = ModelConfig.load("model.yml")
+model = Model.from_config(model_config)  # With randomly initialised weights.
+model.load_state_dict("state_dict.pth")  # Now with trained weight.
+```
+
+----------------------------------------
+
+TITLE: Training GraphNeT Models with PyTorch-Lightning (Python)
+DESCRIPTION: This snippet shows how to train GraphNeT `Model`s using PyTorch-Lightning, leveraging its `Trainer` class for more granular control over the training loop. It configures the `Trainer` with parameters like GPU usage, max epochs, callbacks (e.g., `ProgressBar`), and logging, then initiates training by calling `trainer.fit`.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_16
+
+LANGUAGE: python
+CODE:
+```
+from  pytorch_lightning import Trainer
+
+from  graphnet.training.callbacks import ProgressBar
+
+model = Model(...)
+train_dataloader = DataLoader(...)
+
+# Configure Trainer
+trainer = Trainer(
+    gpus=None,
+    max_epochs=10,
+    callbacks=[ProgressBar()],
+    log_every_n_steps=1,
+    logger=None,
+    strategy="ddp",
+)
+
+# Train model
+trainer.fit(model, train_dataloader)
+```
+
+----------------------------------------
+
+TITLE: Saving GraphNeT Model Configuration and State Dictionary in Python
+DESCRIPTION: This snippet illustrates the recommended method for saving a GraphNeT model by separating its definition from its trained weights. It saves the model's configuration to a YAML file and the `state_dict` (trained weights) to a separate `.pth` file, ensuring better version compatibility and modularity.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_5
+
+LANGUAGE: python
+CODE:
+```
+model.save_config('model.yml')
+model.save_state_dict('state_dict.pth')
+```
+
+----------------------------------------
+
+TITLE: Saving GraphNeT Model Configuration and State Dictionary (Python)
+DESCRIPTION: This snippet demonstrates how to save the model's configuration to a YAML file and its trained weights (state dictionary) to a PyTorch `.pth` file. This method is recommended for version-proof model persistence, separating the model definition from its learned parameters.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_21
+
+LANGUAGE: python
+CODE:
+```
+model.save_config('model.yml')
+model.save_state_dict('state_dict.pth')
+```
+
+----------------------------------------
+
+TITLE: Example Dataset Configuration File (YAML)
+DESCRIPTION: This YAML snippet provides a complete example of a `DatasetConfig` file used in GraphNeT. It defines the data source path, graph definition parameters (like node features and nearest neighbors), pulsemaps, features, truth variables, index column, truth table, and specific train/test/validation selections based on event numbers. This configuration is used to load and process data for training.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_10
+
+LANGUAGE: yaml
+CODE:
+```
+path: $GRAPHNET/data/examples/sqlite/prometheus/prometheus-events.db
+graph_definition:
+  arguments:
+    columns: [0, 1, 2]
+    detector:
+      arguments: {}
+      class_name: Prometheus
+    dtype: null
+    nb_nearest_neighbours: 8
+    node_definition:
+      arguments: {}
+      class_name: NodesAsPulses
+    node_feature_names: [sensor_pos_x, sensor_pos_y, sensor_pos_z, t]
+  class_name: KNNGraph
+pulsemaps:
+  - total
+features:
+  - sensor_pos_x
+  - sensor_pos_y
+  - sensor_pos_z
+  - t
+truth:
+  - injection_energy
+  - injection_type
+  - injection_interaction_type
+  - injection_zenith
+  - injection_azimuth
+  - injection_bjorkenx
+  - injection_bjorkeny
+  - injection_position_x
+  - injection_position_y
+  - injection_position_z
+  - injection_column_depth
+  - primary_lepton_1_type
+  - primary_hadron_1_type
+  - primary_lepton_1_position_x
+  - primary_lepton_1_position_y
+  - primary_lepton_1_position_z
+  - primary_hadron_1_position_x
+  - primary_hadron_1_position_y
+  - primary_hadron_1_position_z
+  - primary_lepton_1_direction_theta
+  - primary_lepton_1_direction_phi
+  - primary_hadron_1_direction_theta
+  - primary_hadron_1_direction_phi
+  - primary_lepton_1_energy
+  - primary_hadron_1_energy
+  - total_energy
+  - dummy_pid
+index_column: event_no
+truth_table: mc_truth
+seed: 21
+selection:
+  test: event_no % 5 == 0
+  validation: event_no % 5 == 1
+  train: event_no % 5 > 1
+```
+
+----------------------------------------
+
+TITLE: Example Dataset Configuration File in GraphNeT (YAML)
+DESCRIPTION: This YAML snippet provides a complete example of a `DatasetConfig` file used in GraphNeT. It defines the path to the input SQLite database, the graph definition (e.g., `KNNGraph` with `Prometheus` detector and `NodesAsPulses` node features), specified pulsemaps, and lists of features and truth variables to be loaded from the dataset. This configuration is crucial for setting up data processing pipelines.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_7
+
+LANGUAGE: yaml
+CODE:
+```
+path: $GRAPHNET/data/examples/sqlite/prometheus/prometheus-events.db
+graph_definition:
+  arguments:
+    columns: [0, 1, 2]
+    detector:
+      arguments: {}
+      class_name: Prometheus
+      dtype: null
+    nb_nearest_neighbours: 8
+  node_definition:
+    arguments: {}
+    class_name: NodesAsPulses
+    node_feature_names: [sensor_pos_x, sensor_pos_y, sensor_pos_z, t]
+  class_name: KNNGraph
+pulsemaps:
+  - total
+features:
+  - sensor_pos_x
+  - sensor_pos_y
+  - sensor_pos_z
+  - t
+truth:
+  - injection_energy
+  - injection_type
+  - injection_interaction_type
+  - injection_zenith
+  - injection_azimuth
+  - injection_bjorkenx
+  - injection_bjorkeny
+  - injection_position_x
+  - injection_position_y
+  - injection_position_z
+  - injection_column_depth
+  - primary_lepton_1_type
+  - primary_hadron_1_type
+  - primary_lepton_1_position_x
+  - primary_lepton_1_position_y
+  - primary_lepton_1_position_z
+  - primary_hadron_1_position_x
+  - primary_hadron_1_position_y
+  - primary_hadron_1_position_z
+  - primary_lepton_1_direction_theta
+  - primary_lepton_1_direction_phi
+  - primary_hadron_1_direction_theta
+  - primary_hadron_1_direction_phi
+  - primary_lepton_1_energy
+  - primary_hadron_1_energy
+```
+
+----------------------------------------
+
+TITLE: Defining a StandardModel for Zenith Reconstruction in GraphNeT (Python)
+DESCRIPTION: This snippet demonstrates how to import and configure various GraphNeT components (detector, graph, GNN, task, loss function) to construct a `StandardModel`. The example specifically builds a model for zenith angle reconstruction with uncertainties, utilizing `KNNGraph` for data representation, `DynEdge` as the GNN backbone, and `ZenithReconstructionWithKappa` for the physics task, along with `VonMisesFisher2DLoss` for training.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_11
+
+LANGUAGE: python
+CODE:
+```
+# Choice of graph representation, GNN architecture, and physics task
+from graphnet.models.detector.prometheus import Prometheus
+from graphnet.models.graphs import KNNGraph
+from graphnet.models.graphs.nodes import NodesAsPulses
+from graphnet.models.gnn.dynedge import DynEdge
+from graphnet.models.task.reconstruction import ZenithReconstructionWithKappa
+
+# Choice of loss function and Model class
+from graphnet.training.loss_functions import VonMisesFisher2DLoss
+from graphnet.models import StandardModel
+
+# Configuring the components
+
+# Represents the data as a point-cloud graph where each
+# node represents a pulse of Cherenkov radiation
+# edges drawn to the 8 nearest neighbours 
+
+graph_definition = KNNGraph(
+    detector=Prometheus(),
+    node_definition=NodesAsPulses(),
+    nb_nearest_neighbours=8,
+)
+backbone = DynEdge(
+    nb_inputs=detector.nb_outputs,
+    global_pooling_schemes=["min", "max", "mean"],
+)
+task = ZenithReconstructionWithKappa(
+    hidden_size=backbone.nb_outputs,
+    target_labels="injection_zenith",
+    loss_function=VonMisesFisher2DLoss(),
+)
+
+# Construct the Model
+model = StandardModel(
+    graph_definition=graph_definition,
+    backbone=backbone,
+    tasks=[task],
+)
+```
+
+----------------------------------------
+
+TITLE: Defining a StandardModel for Zenith Reconstruction in GraphNeT (Python)
+DESCRIPTION: This snippet demonstrates how to construct a `StandardModel` in GraphNeT for reconstructing the zenith angle with uncertainties. It configures a `KNNGraph` for data representation, a `DynEdge` GNN as the backbone, and a `ZenithReconstructionWithKappa` task with a `VonMisesFisher2DLoss` function. The model combines these components to process ORCA150 detector data.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_9
+
+LANGUAGE: python
+CODE:
+```
+# Choice of graph representation, architecture, and physics task 
+from graphnet.models.detector.prometheus import ORCA150
+from graphnet.models.graphs import KNNGraph
+from graphnet.models.graphs.nodes import NodesAsPulses
+from graphnet.models.gnn.dynedge import DynEdge
+from graphnet.models.task.reconstruction import ZenithReconstructionWithKappa
+    
+# Choice of loss function and Model class
+from graphnet.training.loss_functions import VonMisesFisher2DLoss
+from graphnet.models import StandardModel
+    
+# Configuring the components
+    
+# Represents the data as a point-cloud graph where each
+# node represents a pulse of Cherenkov radiation
+# edges drawn to the 8 nearest neighbours 
+    
+graph_definition = KNNGraph(
+        detector=ORCA150(),
+        node_definition=NodesAsPulses(),
+        nb_nearest_neighbours=8,
+    )
+backbone = DynEdge(
+        nb_inputs=graph_definition.nb_outputs,
+        global_pooling_schemes=["min", "max", "mean"],
+    )
+task = ZenithReconstructionWithKappa(
+        hidden_size=backbone.nb_outputs,
+        target_labels="injection_zenith",
+        loss_function=VonMisesFisher2DLoss(),
+    )
+    
+# Construct the Model
+model = StandardModel(
+        graph_definition=graph_definition,
+        backbone=backbone,
+        tasks=[task],
+    )
+```
+
+----------------------------------------
+
+TITLE: Example GraphNeT Model Configuration (YAML)
+DESCRIPTION: This YAML snippet provides a detailed example of a `ModelConfig` for an energy reconstruction model in GraphNeT. It defines the model's architecture (DynEdge), graph definition (KNNGraph with Prometheus detector and NodesAsPulses node definition), optimizer (Adam), scheduler (PiecewiseLinearLR), and a specific task (EnergyReconstruction with LogCoshLoss). This configuration can be used to instantiate a complex model programmatically.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_2
+
+LANGUAGE: yaml
+CODE:
+```
+arguments:
+  architecture:
+    ModelConfig:
+      arguments:
+        add_global_variables_after_pooling: false
+        dynedge_layer_sizes: null
+        features_subset: null
+        global_pooling_schemes: [min, max, mean, sum]
+        nb_inputs: 4
+        nb_neighbours: 8
+        post_processing_layer_sizes: null
+        readout_layer_sizes: null
+      class_name: DynEdge
+  graph_definition:
+    ModelConfig:
+      arguments:
+        columns: [0, 1, 2]
+        detector:
+          ModelConfig:
+            arguments: {}
+            class_name: Prometheus
+        dtype: null
+        nb_nearest_neighbours: 8
+        node_definition:
+          ModelConfig:
+            arguments: {}
+            class_name: NodesAsPulses
+        node_feature_names: [sensor_pos_x, sensor_pos_y, sensor_pos_z, t]
+      class_name: KNNGraph
+  optimizer_class: '!class torch.optim.adam Adam'
+  optimizer_kwargs: {eps: 0.001, lr: 0.001}
+  scheduler_class: '!class graphnet.training.callbacks PiecewiseLinearLR'
+  scheduler_config: {interval: step}
+  scheduler_kwargs:
+    factors: [0.01, 1, 0.01]
+    milestones: [0, 20.0, 80]
+  tasks:
+  - ModelConfig:
+      arguments:
+        hidden_size: 128
+        loss_function:
+          ModelConfig:
+            arguments: {}
+            class_name: LogCoshLoss
+        loss_weight: null
+        prediction_labels: null
+        target_labels: total_energy
+        transform_inference: '!lambda x: torch.pow(10,x)'
+        transform_prediction_and_target: '!lambda x: torch.log10(x)'
+        transform_support: null
+        transform_target: null
+      class_name: EnergyReconstruction
+  class_name: StandardModel
+```
+
+----------------------------------------
+
+TITLE: Example GraphNeT Model Configuration YAML
+DESCRIPTION: This YAML snippet provides an example of a `ModelConfig` file, showcasing how the `architecture` (e.g., `DynEdge`) and `graph_definition` components are structured. It details their respective arguments and class names, illustrating the human-readable and portable format for defining GraphNeT models.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_14
+
+LANGUAGE: yaml
+CODE:
+```
+arguments:
+  architecture:
+    ModelConfig:
+      arguments:
+        add_global_variables_after_pooling: false
+        dynedge_layer_sizes: null
+        features_subset: null
+        global_pooling_schemes: [min, max, mean, sum]
+        nb_inputs: 4
+        nb_neighbours: 8
+        post_processing_layer_sizes: null
+        readout_layer_sizes: null
+      class_name: DynEdge
+  graph_definition:
+    ModelConfig:
+      arguments:
+        columns: [0, 1, 2]
+```
+
+----------------------------------------
+
+TITLE: Saving GraphNeT Model Configuration to YAML (Python)
+DESCRIPTION: This snippet demonstrates how to save the configuration of a GraphNeT `Model` instance to a YAML file. This allows for easy distribution and reconstruction of the model architecture without needing the original code. The `save_config` method serializes the model's structure.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_0
+
+LANGUAGE: python
+CODE:
+```
+model = Model(...)
+model.save_config("model.yml")
+```
+
+----------------------------------------
+
+TITLE: Logging Configuration to Weights & Biases (Python)
+DESCRIPTION: This snippet illustrates how to log various configuration objects (training, model, and dataset configurations) to the Weights & Biases experiment run. By updating `wandb_logger.experiment.config`, these configurations are saved as artifacts, enhancing reproducibility and transparency of experiments.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_18
+
+LANGUAGE: python
+CODE:
+```
+wandb_logger.experiment.config.update(training_config)
+wandb_logger.experiment.config.update(model_config.as_dict())
+wandb_logger.experiment.config.update(dataset_config.as_dict())
+```
+
+----------------------------------------
+
+TITLE: Configuring DataConverter for LiquidO H5 to Parquet Conversion (Python)
+DESCRIPTION: This snippet demonstrates how to configure and use GraphNeT's `DataConverter` to convert `.h5` files from the LiquidO experiment into `.parquet` format. It initializes the converter with a `LiquidOReader`, `ParquetWriter`, and specific extractors, then executes the conversion and optionally merges the output files. This setup enables parallel processing of files.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/data_conversion/data_conversion.rst#_snippet_0
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.extractors.liquido import H5HitExtractor, H5TruthExtractor
+from graphnet.data.dataconverter import DataConverter
+from graphnet.data.readers import LiquidOReader
+from graphnet.data.writers import ParquetWriter
+
+# Your settings
+dir_with_files = '/home/my_files'
+outdir = '/home/my_outdir'
+num_workers = 5
+
+# Instantiate DataConverter - exports data from LiquidO to Parquet
+converter = DataConverter(file_reader = LiquidOReader(),
+                          save_method = ParquetWriter(),
+                          extractors=[H5HitExtractor(), H5TruthExtractor()],
+                          outdir=outdir,
+                          num_workers=num_workers,
+                        )
+# Run Converter
+converter(input_dir = dir_with_files)
+# Merge files (Optional)
+converter.merge_files()
+```
+
+----------------------------------------
+
+TITLE: Converting Data to GraphNeT Backend with DataConverter (Python)
+DESCRIPTION: This example demonstrates how to instantiate and use GraphNeT's `DataConverter` to process raw experimental data. It configures the converter with a custom `MyReader`, `ParquetWriter`, and `MyExtractor` instances, then runs the conversion process and optionally merges the output files.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/integration/integration.rst#_snippet_4
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.extractors.myexperiment import MyExtractor
+from graphnet.data.dataconverter import DataConverter
+from graphnet.data.readers import MyReader
+from graphnet.data.writers import ParquetWriter
+
+# Your settings
+dir_with_files = '/home/my_files'
+outdir = '/home/my_outdir'
+num_workers = 5
+
+# Instantiate DataConverter - exports data from MyExperiment to Parquet
+converter = DataConverter(file_reader = MyReader(),
+                              save_method = ParquetWriter(),
+                              extractors=[MyExtractor('hits'), MyExtractor('truth')],
+                              outdir=outdir,
+                              num_workers=num_workers,
+                            )
+# Run Converter
+converter(input_dir = dir_with_files)
+# Merge files (Optional)
+converter.merge_files()
+```
+
+----------------------------------------
+
+TITLE: Loading GraphNeT Model from YAML Configuration (Python)
+DESCRIPTION: This snippet shows how to reconstruct a GraphNeT `Model` architecture from a previously saved YAML configuration file. The `Model.from_config` static method deserializes the configuration, and the `trust=True` parameter is required to allow dynamic loading of classes referenced within the file after inspection.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_1
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.models import Model
+
+# Indicate that you `trust` the config file after inspecting it, to allow for
+# dynamically loading classes references in the file.
+model = Model.from_config("model.yml", trust=True)
+```
+
+----------------------------------------
+
+TITLE: Loading GraphNeT Model from YAML Configuration (Python)
+DESCRIPTION: This snippet demonstrates how to reconstruct a GraphNeT `Model` architecture from a previously saved YAML configuration file. The `trust=True` argument is crucial as it allows for dynamically loading classes referenced within the configuration file, enabling the recreation of complex model structures.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_13
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.models import Model
+
+# Indicate that you `trust` the config file after inspecting it, to allow for
+# dynamically loading classes references in the file.
+model = Model.from_config("model.yml", trust=True)
+```
+
+----------------------------------------
+
+TITLE: Loading GraphNeT Model from PyTorch-Lightning Checkpoint in Python
+DESCRIPTION: This snippet shows how to load a GraphNeT model using PyTorch-Lightning's `load_from_checkpoint` method. This approach leverages Lightning's built-in checkpointing capabilities to restore a model, including its trained weights, from a `.ckpt` file, often used for resuming training or inference.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_7
+
+LANGUAGE: python
+CODE:
+```
+model_config = ModelConfig.load("model.yml")
+model = Model.from_config(model_config)  # With randomly initialised weights.
+model.load_from_checkpoint("checkpoint.ckpt")  # Now with trained weight.
+```
+
+----------------------------------------
+
+TITLE: Instantiating SQLiteDataset in GraphNeT (Python)
+DESCRIPTION: This snippet demonstrates how to initialize a `SQLiteDataset` from a SQLite database file. It requires defining a `GraphDefinition` (e.g., `KNNGraph` with `Prometheus` detector and `NodesAsPulses` node definition) to structure the raw data into a graph. Key parameters include the database `path`, `pulsemaps` for pulse series, `truth_table` for truth labels, `features` for node attributes, and `truth` for event-level labels. The dataset yields `torch_geometric.data.Data` objects.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_8
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.dataset.sqlite.sqlite_dataset import SQLiteDataset
+from graphnet.models.detector.prometheus  import  Prometheus
+from graphnet.models.graphs  import  KNNGraph
+from graphnet.models.graphs.nodes  import  NodesAsPulses
+  
+graph_definition = KNNGraph(
+    detector=Prometheus(),
+    node_definition=NodesAsPulses(),
+    nb_nearest_neighbours=8,
+)
+
+dataset = SQLiteDataset(
+    path="data/examples/sqlite/prometheus/prometheus-events.db",
+    pulsemaps="total",
+    truth_table="mc_truth",
+    features=["sensor_pos_x", "sensor_pos_y", "sensor_pos_z", "t", ...],
+    truth=["injection_energy", "injection_zenith", ...],
+    graph_definiton = graph_definition,
+)
+
+graph = dataset[0]  # torch_geometric.data.Data
+```
+
+----------------------------------------
+
+TITLE: Training GraphNeT StandardModel using `model.fit` (Python)
+DESCRIPTION: This example illustrates the simplified training syntax for GraphNeT models inheriting from `StandardModel`. The `model.fit` method provides an `sklearn`-like interface for training, abstracting away much of the boilerplate code typically required for PyTorch-Lightning based training loops. It accepts a `train_dataloader` and training parameters like `max_epochs`.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_10
+
+LANGUAGE: python
+CODE:
+```
+model = Model(...)
+train_dataloader = DataLoader(...)
+model.fit(train_dataloader=train_dataloader, max_epochs=10)
+```
+
+----------------------------------------
+
+TITLE: Training DynEdge Model from Configuration Files (Bash)
+DESCRIPTION: This snippet illustrates how to train a DynEdge GNN model using GraphNeT with configuration files for dataset loading and model definition. It provides commands for displaying CLI help and training models for energy, vertex position, and direction reconstruction, including handling 'kappa' values for uncertainty. This approach is recommended for standard model configurations due to its readability and shareability.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/examples/04_training/README.md#_snippet_1
+
+LANGUAGE: bash
+CODE:
+```
+# Show the CLI
+(graphnet) $ python examples/04_training/03_train_dynedge_from_config.py --help
+
+# Train energy regression model
+(graphnet) $ python examples/04_training/03_train_dynedge_from_config.py
+
+# Same as above, as this is the default model config.
+(graphnet) $ python examples/04_training/03_train_dynedge_from_config.py \
+    --model-config configs/models/example_energy_reconstruction_model.yml
+    
+# Train a vertex position reconstruction model
+(graphnet) $ python examples/04_training/03_train_dynedge_from_config.py \
+    --model-config configs/models/example_vertex_position_reconstruction_model.yml
+
+# Trains a direction (zenith, azimuth) reconstruction model. Note that the
+# chosen `Task` in the model config file also returns estimated "kappa" values,
+# i.e. inverse variance, for each predicted feature, meaning that we need to
+# manually specify the names of these.
+(graphnet) $ python examples/04_training/03_train_dynedge_from_config.py --gpus 0 \
+    --model-config configs/models/example_direction_reconstruction_model.yml  \
+    --prediction-names zenith_pred zenith_kappa_pred azimuth_pred azimuth_kappa_pred
+```
+
+----------------------------------------
+
+TITLE: Saving GraphNeT Model with Built-in Save Method (Python)
+DESCRIPTION: This snippet shows how to save an entire GraphNeT model, including its `state_dict`, using the convenient `model.save` method. The model is serialized to the specified file path, allowing for easy persistence and later retrieval.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_19
+
+LANGUAGE: python
+CODE:
+```
+model.save("model.pth")
+```
+
+----------------------------------------
+
+TITLE: Loading GraphNeT Model with Built-in Load Method (Python)
+DESCRIPTION: This snippet demonstrates how to load a previously saved GraphNeT model using the `Model.load` classmethod. It reconstructs the entire model object from the specified file path, making it ready for inference or further training.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_20
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.models import Model
+
+loaded_model = Model.load("model.pth")
+```
+
+----------------------------------------
+
+TITLE: Implementing a Custom GraphNeT Detector Class (Python)
+DESCRIPTION: This code defines `MyDetector`, a custom `Detector` class inheriting from `graphnet.models.detector.Detector`. It specifies detector geometry parameters like `xyz` columns, `string_id_column`, `sensor_id_column`, and `geometry_table_path`. It also implements `feature_map` to define standardization functions (`_sensor_xyz`, `_sensor_time`) for raw sensor data, crucial for preparing data for deep learning models.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/integration/integration.rst#_snippet_5
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.models.detector import Detector
+
+class MyDetector(Detector):
+    """`Detector` class for my experiment."""
+
+    geometry_table_path = "path_to_geometry_table.parquet"
+    xyz = ["sensor_x", "sensor_y", "sensor_z"]
+    string_id_column = "string_id"
+    sensor_id_column = "sensor_id"
+
+    def feature_map(self) -> Dict[str, Callable]:
+        """Map standardization functions to each dimension of input data."""
+        feature_map = {
+            "sensor_x": self._sensor_xyz,
+            "sensor_y": self._sensor_xyz,
+            "sensor_z": self._sensor_xyz,
+            "sensor_time": self._sensor_time,
+        }
+        return feature_map
+
+    def _sensor_xyz(self, x: torch.tensor) -> torch.tensor:
+        return x / 500.0
+
+    def _sensor_time(self, x: torch.tensor) -> torch.tensor:
+        return (x - 1.0e04) / 3.0e4
+```
+
+----------------------------------------
+
+TITLE: Recreating GraphNeT Dataset from YAML Configuration
+DESCRIPTION: This snippet shows how to recreate a GraphNeT `Dataset` instance from a previously exported YAML configuration file using `Dataset.from_config()`. This method ensures that the dataset is loaded with the exact same settings, promoting reproducibility across different sessions or environments.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_4
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.dataset import Dataset
+
+dataset = Dataset.from_config("dataset.yml")
+```
+
+----------------------------------------
+
+TITLE: Loading Dataset from Configuration in GraphNeT (Python)
+DESCRIPTION: This snippet shows how to recreate a `Dataset` object from a previously saved `DatasetConfig` YAML file. The `Dataset.from_config()` static method reads the configuration from `dataset.yml`, ensuring that the dataset is initialized with the exact same settings as when it was exported.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_1
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.dataset import Dataset
+
+dataset = Dataset.from_config("dataset.yml")
+```
+
+----------------------------------------
+
+TITLE: Defining Multiple Dataset Selections in GraphNeT (Python)
+DESCRIPTION: This snippet illustrates how to define multiple named selections within a single `DatasetConfig` for a `Dataset` object. By assigning a dictionary to `dataset.config.selection`, different subsets of data (e.g., 'train' and 'test') can be specified using string-based conditions. This configuration is then saved to `dataset.yml`.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_2
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(...)
+dataset.config.selection = {
+    "train": "event_no % 2 == 0",
+    "test": "event_no % 2 == 1",
+}
+dataset.config.dump("dataset.yml")
+```
+
+----------------------------------------
+
+TITLE: Creating DataLoader for GraphNeT Dataset (Python)
+DESCRIPTION: This snippet demonstrates how to create a `DataLoader` instance from an existing GraphNeT `Dataset`. The `DataLoader` handles batching and shuffling of the graph data, making it suitable for training loops. Key parameters include the `dataset` itself, `batch_size` to define the number of samples per batch, and `num_workers` for parallel data loading. It iterates over batches of `torch_geometric.data.Data` objects.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_10
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.dataloader import DataLoader
+
+dataloader = DataLoader(
+    dataset,
+    batch_size=128,
+    num_workers=10,
+)
+
+for batch in dataloader:
+    ...
+```
+
+----------------------------------------
+
+TITLE: Loading Multiple Datasets from Config in Python
+DESCRIPTION: This snippet shows how to load datasets previously defined and saved in a `dataset.yml` configuration file. The `Dataset.from_config` method returns a dictionary where keys correspond to the named selections (e.g., 'train', 'test') and values are the respective `Dataset` objects, facilitating access to the pre-defined splits.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_6
+
+LANGUAGE: python
+CODE:
+```
+datasets = Dataset.from_config("dataset.yml")
+>>> datasets
+{"train": Dataset(...),
+"test": Dataset(...),}
+```
+
+----------------------------------------
+
+TITLE: Defining Multiple Datasets with Selections in Python
+DESCRIPTION: This snippet demonstrates how to define multiple datasets (e.g., 'train' and 'test') from the same data source using a single `DatasetConfig` file. It assigns different selection criteria to each dataset based on event numbers, then dumps the configuration to a YAML file. This allows for easy recreation of these specific dataset splits.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_5
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(...)
+dataset.config.selection = {
+    "train": "event_no % 2 == 0",
+    "test": "event_no % 2 == 1",
+}
+dataset.config.dump("dataset.yml")
+```
+
+----------------------------------------
+
+TITLE: Logging Configuration Files with Weights & Biases (Python)
+DESCRIPTION: This snippet shows how to log various configuration objects (`training_config`, `model_config`, `dataset_config`) to Weights & Biases using the `wandb_logger.experiment.config.update()` method. This practice significantly improves reproducibility and transparency by saving critical experiment parameters.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_15
+
+LANGUAGE: python
+CODE:
+```
+wandb_logger.experiment.config.update(training_config)
+    wandb_logger.experiment.config.update(model_config.as_dict())
+    wandb_logger.experiment.config.update(dataset_config.as_dict())
+```
+
+----------------------------------------
+
+TITLE: Integrating Weights & Biases for Experiment Tracking (Python)
+DESCRIPTION: This snippet demonstrates how to integrate Weights & Biases (W&B) for experiment tracking with GraphNeT models. It initializes a `WandbLogger` instance, specifying project, entity, and save directory, and then passes this logger to the `model.fit` method to enable automatic logging of training metrics and model artifacts to W&B.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_17
+
+LANGUAGE: python
+CODE:
+```
+import os
+
+from pytorch_lightning.loggers import WandbLogger
+
+# Create wandb directory
+wandb_dir = "./wandb/"
+os.makedirs(wandb_dir, exist_ok=True)
+
+# Initialise Weights & Biases (W&B) run
+wandb_logger = WandbLogger(
+    project="example-script",
+    entity="graphnet-team",
+    save_dir=wandb_dir,
+    log_model=True,
+)
+
+# Fit Model
+model = Model(...)
+model.fit(
+    ...,
+    logger=wandb_logger,
+)
+```
+
+----------------------------------------
+
+TITLE: Initializing Weights & Biases Logger and Fitting Model (Python)
+DESCRIPTION: This snippet demonstrates how to set up `WandbLogger` for experiment tracking in GraphNeT. It initializes a W&B run, creates a dedicated directory for logs, and then integrates the logger when fitting a `Model` instance. This enables automatic logging of training and validation metrics.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_14
+
+LANGUAGE: python
+CODE:
+```
+import os
+
+    from pytorch_lightning.loggers import WandbLogger
+
+    # Create wandb directory
+    wandb_dir = "./wandb/"
+    os.makedirs(wandb_dir, exist_ok=True)
+
+    # Initialise Weights & Biases (W&B) run
+    wandb_logger = WandbLogger(
+        project="example-script",
+        entity="graphnet-team",
+        save_dir=wandb_dir,
+        log_model=True,
+    )
+
+    # Fit Model
+    model = Model(...)
+    model.fit(
+        ...,
+        logger=wandb_logger,
+    )
+```
+
+----------------------------------------
+
+TITLE: Loading Multiple Datasets from Config in GraphNeT (Python)
+DESCRIPTION: This snippet demonstrates how loading a `DatasetConfig` with multiple selections results in a dictionary of `Dataset` objects. When `Dataset.from_config()` is called on a configuration file containing named selections, it returns a dictionary where keys are selection names and values are the corresponding `Dataset` instances, allowing easy access to different data subsets.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_3
+
+LANGUAGE: python
+CODE:
+```
+datasets = Dataset.from_config("dataset.yml")
+>>> datasets
+{"train": Dataset(...),
+"test": Dataset(...),}
+```
+
+----------------------------------------
+
+TITLE: Training DynEdge Model Programmatically (Bash)
+DESCRIPTION: This snippet demonstrates how to train a DynEdge GNN model using the GraphNeT library by programmatically constructing the dataset and model, without relying on configuration files. It shows commands for displaying CLI help, initiating energy regression training, and utilizing single or multiple GPUs. This method is recommended for debugging and experimenting with model configurations.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/examples/04_training/README.md#_snippet_0
+
+LANGUAGE: bash
+CODE:
+```
+# Show the CLI
+(graphnet) $ python examples/04_training/01_train_dynedge.py --help
+
+# Train energy regression model
+(graphnet) $ python examples/04_training/01_train_dynedge.py
+
+# Train using a single GPU
+(graphnet) $ python examples/04_training/01_train_dynedge.py --gpus 0
+
+# Train using multiple GPUs
+(graphnet) $ python examples/04_training/01_train_dynedge.py --gpus 0 1
+```
+
+----------------------------------------
+
+TITLE: Exporting Dataset Configuration in GraphNeT (Python)
+DESCRIPTION: This snippet demonstrates how to export the configuration of a `Dataset` object to a YAML file. The `dataset.config.dump()` method saves details like input data path, tables, columns, and selections, allowing for reproducible dataset creation. The `dataset.yml` file will contain all necessary metadata to recreate the dataset.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_0
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(...)
+dataset.config.dump("dataset.yml")
+```
+
+----------------------------------------
+
+TITLE: Exporting GraphNeT Dataset Configuration to YAML
+DESCRIPTION: This snippet demonstrates how to export the configuration of a GraphNeT `Dataset` instance to a YAML file using `dataset.config.dump()`. This file captures details like input data paths, loaded tables/columns, and applied selections, enabling reproducible dataset creation.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_3
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(...)
+dataset.config.dump("dataset.yml")
+```
+
+----------------------------------------
+
+TITLE: Saving GraphNeT Model Configuration to YAML (Python)
+DESCRIPTION: This snippet illustrates how to save the architectural configuration of a GraphNeT `Model` instance to a YAML file. This allows for the model's definition to be stored and recreated in different sessions, ensuring reproducibility of the model's structure without its trained weights.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_12
+
+LANGUAGE: python
+CODE:
+```
+model = Model(...)
+model.save_config("model.yml")
+```
+
+----------------------------------------
+
+TITLE: Adapting a PyTorch Model for GraphNeT Compatibility (Python)
+DESCRIPTION: This snippet illustrates how to adapt a standard PyTorch model for use within the GraphNeT framework. The key changes involve inheriting from `graphnet.models.Model` instead of `torch.nn.Module` and configuring the `forward` method (not shown here) to accept `torch_geometric.data.Data` objects as input, enabling seamless integration with GraphNeT's data handling.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_13
+
+LANGUAGE: python
+CODE:
+```
+import torch
+from graphnet.models import Model
+from torch_geometric.data import Data
+
+
+class MyGraphNeTModel(Model):
+
+        def __init__(self, 
+                     input_dim : int = 5,
+                     output_dim : int = 10):
+
+            super().__init__()
+```
+
+----------------------------------------
+
+TITLE: Custom Training Loop with PyTorch-Lightning for GraphNeT Models (Python)
+DESCRIPTION: This snippet shows the explicit PyTorch-Lightning equivalent of the simplified `model.fit` method, demonstrating GraphNeT models' full compatibility with PyTorch-Lightning. It configures a `Trainer` instance with various parameters like `max_epochs`, `callbacks`, and `strategy`, then uses `trainer.fit` to train the model with a `train_dataloader`.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_11
+
+LANGUAGE: python
+CODE:
+```
+from  torch_lightning import Trainer
+from  graphnet.training.callbacks import ProgressBar
+
+model = Model(...)
+train_dataloader = DataLoader(...)
+
+# Configure Trainer
+trainer = Trainer(
+        gpus=None,
+        max_epochs=10,
+        callbacks=[ProgressBar()],
+        log_every_n_steps=1,
+        logger=None,
+        strategy="ddp",
+    )
+
+# Train model
+trainer.fit(model, train_dataloader)
+```
+
+----------------------------------------
+
+TITLE: Performing Stacked Model Inference in Python
+DESCRIPTION: This Python function `inference` performs predictions using an ensemble of pre-trained models. It loads multiple models, applies predefined weights to their outputs, and combines them linearly to produce a final prediction. The function handles model loading, state dictionary adjustments, device placement, and batch processing for inference, returning a pandas DataFrame with combined results including event details.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/src/graphnet/models/pretrained/icecube/kaggle/icemix/neutrino_direction/README.md#_snippet_3
+
+LANGUAGE: python
+CODE:
+```
+MODEL_NAMES = [
+    "B_d32",
+    "B_d64",
+    "B_d32_4rel",
+    "B+DynEdge_d64",
+    "S+DynEdge_d32",
+]
+
+MODEL_WEIGHTS = {
+    "B_d32": 0.08254897,
+    "B_d64": 0.15350807,
+    "B_d32_4rel": 0.19367443,
+    "B+DynEdge_d64": 0.23597202,
+    "S+DynEdge_d32": 0.3342965,
+}
+
+MODEL_PATH = {
+    "B_d32": weight_path + "baselineV3_BE_globalrel_d32_0_6ema.pth",
+    "B_d64": weight_path + "baselineV3_BE_globalrel_d64_0_3emaFT_2.pth",
+    "B_d32_4rel": weight_path + "VFTV3_4RELFT_7.pth",
+    "B+DynEdge_d64": weight_path + "V22FT6_1.pth",
+    "S+DynEdge_d32": weight_path + "V23FT5_6.pth",
+}
+
+
+def inference(
+    device: torch.device,
+    test_dataloader: DataLoader,
+) -> pd.DataFrame:
+
+    models, weights = [], []
+    for model_name in MODEL_NAMES:
+        model = build_model(model_name)
+        model.eval()
+        model.inference()
+        checkpoint_path = MODEL_PATH[model_name]
+        checkpoint = torch.load(checkpoint_path, torch.device("cpu"))
+        if "state_dict" in checkpoint:
+            checkpoint = checkpoint["state_dict"]
+        new_checkpoint = {
+            (
+                "_tasks.0._affine.weight"
+                if k == "proj_out.weight"
+                else "_tasks.0._affine.bias"
+                if k == "proj_out.bias"
+                else "_gnn." + k
+            ): v
+            for k, v in checkpoint.items()
+        }
+
+        model.load_state_dict(new_checkpoint)
+        model.to(device)
+        models.append(model)
+        weights.append(MODEL_WEIGHTS[model_name])
+
+    weights = torch.FloatTensor(weights)
+    weights /= weights.sum()
+
+    event_nos, zenith, azimuth, preds = [], [], [], []
+    with torch.no_grad():
+        for batch in test_dataloader:
+            pred = (
+                torch.stack(
+                    [
+                        torch.nan_to_num(model(batch.to(device))[0]).clip(
+                            -1000, 1000
+                        )
+                        for model in models
+                    ],
+                    -1,
+                ).cpu()
+                * weights
+            ).sum(-1)
+            preds.append(pred)
+            event_nos.append(batch.event_no)
+            zenith.append(batch.zenith)
+            azimuth.append(batch.azimuth)
+    preds = torch.cat(preds).to("cpu").detach().numpy()
+    columns = [
+        "direction_x",
+        "direction_y",
+        "direction_z",
+        "direction_kappa",
+    ]
+
+    results = pd.DataFrame(preds, columns=columns)
+    results["event_no"] = torch.cat(event_nos).to("cpu").detach().numpy()
+
+    results["zenith"] = torch.cat(zenith).to("cpu").numpy()
+    results["azimuth"] = torch.cat(azimuth).to("cpu").numpy()
+
+    return results
+```
+
+----------------------------------------
+
+TITLE: Installing Pre-Commit Hooks for GraphNeT Development
+DESCRIPTION: This command installs the pre-commit hooks configured for the GraphNeT project. Once installed, these hooks automatically format code using `black` and `docformatter`, and check for errors and style adherence with `flake8`, `mypy`, and `pydocstyle` every time a change is committed, ensuring consistent code quality and style.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/contribute/contribute.rst#_snippet_0
+
+LANGUAGE: bash
+CODE:
+```
+pre-commit install
+```
+
+----------------------------------------
+
+TITLE: Defining a Custom Label Class for GraphNeT (Python)
+DESCRIPTION: This code defines a custom `Label` class, `MyCustomLabel`, which can be used to compute truth labels on the fly within GraphNeT. It inherits from `graphnet.training.labels.Label` and requires implementing the `__init__` method to set a unique `key` and the `__call__` method to define the logic for computing the label from a `torch_geometric.data.Data` graph object.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_12
+
+LANGUAGE: python
+CODE:
+```
+import torch
+from torch_geometric.data import Data
+
+from graphnet.training.labels import Label
+
+class MyCustomLabel(Label):
+    """Class for producing my label."""
+    def __init__(self):
+        """Construct `MyCustomLabel`."""
+        # Base class constructor
+        super().__init__(key="my_custom_label")
+
+    def __call__(self, graph: Data) -> torch.tensor:
+        """Compute label for `graph`."""
+```
+
+----------------------------------------
+
+TITLE: Loading Pre-trained Model Weights into GraphNet (Python)
+DESCRIPTION: This snippet demonstrates how to load pre-trained model weights from a PyTorch checkpoint into a GraphNet model. It handles cases where the state dictionary might be nested under a 'state_dict' key and remaps specific keys ('proj_out.weight', 'proj_out.bias') to match the GraphNet model's internal structure, ensuring compatibility for loading with `strict=False`.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/src/graphnet/models/pretrained/icecube/kaggle/icemix/neutrino_direction/README.md#_snippet_0
+
+LANGUAGE: python
+CODE:
+```
+checkpoint = torch.load(path_to_checkpoint, torch.device("cpu"))
+if "state_dict" in checkpoint:
+       checkpoint = checkpoint["state_dict"]
+new_checkpoint = {('_tasks.0._affine.weight' if k == 'proj_out.weight' else '_tasks.0._affine.bias' if k == 'proj_out.bias' else '_gnn.' + k): v for k, v in checkpoint.items()}
+model.load_state_dict(new_checkpoint, strict=False)
+```
+
+----------------------------------------
+
+TITLE: Loading GraphNeT Model from PyTorch-Lightning Checkpoint (Python)
+DESCRIPTION: This snippet illustrates how to load a GraphNeT `Model` using PyTorch-Lightning's `load_from_checkpoint` method. It first builds the model structure from a `ModelConfig` and then directly loads the entire model state, including trained weights, from a `.ckpt` checkpoint file.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_23
+
+LANGUAGE: python
+CODE:
+```
+model_config = ModelConfig.load("model.yml")
+model = Model.from_config(model_config)  # With randomly initialised weights.
+model.load_from_checkpoint("checkpoint.ckpt")  # Now with trained weight.
+```
+
+----------------------------------------
+
+TITLE: Implementing MyReader for Pickle Files in GraphNeT (Python)
+DESCRIPTION: This Python class, MyReader, extends GraphNeTFileReader to handle data stored in .pickle files from 'MyExperiment'. It defines accepted file extensions and extractors, and its __call__ method opens a specified pickle file, loads its content, and applies registered Extractor instances to process the data, returning a dictionary of extracted pandas DataFrames.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/integration/integration.rst#_snippet_0
+
+LANGUAGE: python
+CODE:
+```
+from typing import List, Union, Dict
+import pandas as pd
+import pickle
+
+# Import the generic file reader
+from .graphnet_file_reader import GraphNeTFileReader
+
+# Import your own extractor
+from graphnet.data.extractors.myexperiment import MyExtractor
+
+class MyReader(GraphNeTFileReader):
+    """A class for reading my pickle files from MyExperiment."""
+
+    _accepted_file_extensions = [".pickle"]
+    _accepted_extractors = [MyExtractor]
+
+    def __call__(self, file_path: str) -> Dict[str, pd.DataFrame]:
+        """Extract data from single pickle file.
+
+        Args:
+            file_path: Path to pickle file.
+
+        Returns:
+            Extracted data.
+        """
+
+        # Open file
+        file = open(file_path,'r')
+        data = pickle.load(file)
+
+        # Apply extractors
+        outputs = {}
+        for extractor in self._extractors:
+            output = extractor(data)
+            if output is not None:
+                outputs[extractor._extractor_name] = output
+        return outputs
+```
+
+----------------------------------------
+
+TITLE: Combining Multiple Selection Criteria for a Single Dataset in Python
+DESCRIPTION: This snippet illustrates how to define a single, named dataset (e.g., 'train') that combines multiple selection criteria. Each criterion is a string representing a logical condition. When loaded, such a configuration results in an `EnsembleDataset`, effectively merging data from various conditions into one logical dataset.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_7
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(..)
+dataset.config.selection = {
+    "train": [
+        "event_no % 2 == 0 & abs(injection_type) == 12",
+        "event_no % 2 == 0 & abs(injection_type) == 14",
+        "event_no % 2 == 0 & abs(injection_type) == 16",
+    ],
+    (...)
+}
+>>> dataset.config.dump("dataset.yml")
+>>> datasets = Dataset.from_config("dataset.yml")
+>>> datasets
+{"train": EnsembleDataset(...),
+        (...)}
+```
+
+----------------------------------------
+
+TITLE: Converting Pandas DataFrame to Parquet Geometry Table (Python)
+DESCRIPTION: This snippet demonstrates how to convert a CSV file into a Parquet-formatted geometry table suitable for GraphNeT. It reads a CSV into a Pandas DataFrame, sets a `MultiIndex` using the `sensor_x`, `sensor_y`, and `sensor_z` columns, and then saves the resulting DataFrame as a Parquet file.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/integration/integration.rst#_snippet_6
+
+LANGUAGE: python
+CODE:
+```
+import pandas as pd
+
+path_to_array = 'my_table.csv'
+
+table_without_index = pd.read_csv(path_to_array)
+geometry_table = table_without_index.set_index(['sensor_x','sensor_y','sensor_z'])
+geometry_table.to_parquet('my_geometry_table.parquet')
+```
+
+----------------------------------------
+
+TITLE: Combining Multiple GraphNeT Datasets with EnsembleDataset (Python)
+DESCRIPTION: This example illustrates the use of `EnsembleDataset` to merge various GraphNeT `Dataset` instances, such as `SQLiteDataset` and `ParquetDataset`, into a single, cohesive dataset. This allows for unified data access across different storage formats.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_14
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data import EnsembleDataset
+from graphnet.data.parquet import ParquetDataset
+from graphnet.data.sqlite import SQLiteDataset
+
+dataset_1 = SQLiteDataset(...)
+dataset_2 = SQLiteDataset(...)
+dataset_3 = ParquetDataset(...)
+
+ensemble_dataset = EnsembleDataset([dataset_1, dataset_2, dataset_3])
+```
+
+----------------------------------------
+
+TITLE: Defining Binary Classification Task in GraphNeT (Python)
+DESCRIPTION: This snippet defines a `BinaryClassificationTask` by subclassing `StandardLearnedTask` in GraphNeT. It specifies that the task expects a single input feature (`nb_inputs = 1`), which is a logit for the signal class. The `_forward` method applies a sigmoid activation to the input tensor `x`, transforming the latent prediction into a probability for binary classification.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/models/models.rst#_snippet_8
+
+LANGUAGE: python
+CODE:
+```
+from torch import Tensor
+from graphnet.models.task import StandardLearnedTask
+
+class BinaryClassificationTask(StandardLearnedTask):
+    """Performs binary classification."""
+
+    # Requires one feature, logit for being signal class.
+    nb_inputs = 1
+    default_target_labels = ["target"]
+    default_prediction_labels = ["target_pred"]
+
+    def _forward(self, x: Tensor) -> Tensor:
+        # transform probability of being muon
+        return torch.sigmoid(x)
+```
+
+----------------------------------------
+
+TITLE: Adding Custom Labels to GraphNeT Dataset (Python)
+DESCRIPTION: This snippet demonstrates how to integrate a custom `Label` object into a GraphNeT `Dataset`. It shows the `add_label` method for attaching the label and subsequent access of the custom data via dictionary-like indexing on a retrieved graph object.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_13
+
+LANGUAGE: python
+CODE:
+```
+dataset.add_label(MyCustomLabel())
+
+graph = dataset[0]
+graph["my_custom_label"]
+>>> ...
+```
+
+----------------------------------------
+
+TITLE: Creating a Custom H5Extractor for LiquidO Data in GraphNeT (Python)
+DESCRIPTION: This `H5Extractor` class, subclassing `Extractor`, is designed to retrieve specific tables and columns from LiquidO `.h5` files. It initializes with an `extractor_name` (which also serves as the table name) and a list of `column_names`. The `__call__` method opens the H5 file, extracts the specified table, verifies column consistency, and returns the data as a pandas DataFrame. It raises an `AssertionError` if column counts do not match.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/data_conversion/data_conversion.rst#_snippet_3
+
+LANGUAGE: python
+CODE:
+```
+class H5Extractor(Extractor):
+    """Class for extracting information from LiquidO h5 files."""
+
+    def __init__(self, extractor_name: str, column_names: List[str]):
+        """Construct H5Extractor.
+
+        Args:
+            extractor_name: Name of the `H5Extractor` instance.
+            Used to keep track of the provenance of different data,
+            and to name tables to which this data is saved.
+            column_names: Name of the columns in `extractor_name`.
+        """
+        # Member variable(s)
+        self._table = extractor_name
+        self._column_names = column_names
+        # Base class constructor
+        super().__init__(extractor_name=extractor_name)
+
+    def __call__(self, file_path: str) -> pd.DataFrame:
+        """Extract information from h5 file."""
+        with h5py.File(file_path, "r") as f:
+            available_tables = [f for f in f.keys()]
+            if self._table in available_tables:
+                array = f[self._table][:]
+                # Will throw error if the number of columns don't match
+                self._verify_columns(array)
+                df = pd.DataFrame(array, columns=self._column_names)
+                return df
+            else:
+                return None
+
+    def _verify_columns(self, array: np.ndarray) -> None:
+        try:
+            assert array.shape[1] == len(self._column_names)
+        except AssertionError as e:
+            self.error(
+                f"Got {len(self._column_names)} column names but "
+                f"{self._table} has {array.shape[1]}. Please make sure "
+                f"that the column names match. ({self._column_names})"
+            )
+            raise e
+```
+
+----------------------------------------
+
+TITLE: Combining Multiple Selections into an Ensemble Dataset in GraphNeT (Python)
+DESCRIPTION: This snippet shows how to combine multiple complex selection conditions into a single named dataset, which results in an `EnsembleDataset`. By providing a list of conditions for a single key in `dataset.config.selection`, GraphNeT merges these conditions. When loaded, this configuration yields an `EnsembleDataset` that aggregates data from all specified sub-selections.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_4
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(..)
+dataset.config.selection = {
+    "train": [
+        "event_no % 2 == 0 & abs(injection_type) == 12",
+        "event_no % 2 == 0 & abs(injection_type) == 14",
+        "event_no % 2 == 0 & abs(injection_type) == 16",
+    ],
+    (...)
+}
+>>> dataset.config.dump("dataset.yml")
+>>> datasets = Dataset.from_config("dataset.yml")
+>>> datasets
+{"train": EnsembleDataset(...),
+        (...)}
+```
+
+----------------------------------------
+
+TITLE: Referencing External Selection Files in GraphNeT (Python)
+DESCRIPTION: This snippet illustrates how to define dataset selections by referencing external CSV or JSON files. Instead of embedding complex conditions directly, `DatasetConfig` allows pointing to files (e.g., `train_selection.csv`) that contain the selection logic. This promotes modularity and reusability of selection criteria across different dataset configurations.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_6
+
+LANGUAGE: python
+CODE:
+```
+dataset.config.selection = {
+    "train": "50000 random events ~ train_selection.csv",
+    "test": "test_selection.csv",
+}
+```
+
+----------------------------------------
+
+TITLE: Referencing External Selection Files in Python
+DESCRIPTION: This snippet shows how to define dataset selections by referencing external CSV or JSON files. This approach allows for managing complex or large selection criteria outside the main configuration file, promoting reusability and easier updates of selection logic.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_9
+
+LANGUAGE: python
+CODE:
+```
+dataset.config.selection = {
+    "train": "50000 random events ~ train_selection.csv",
+    "test": "test_selection.csv",
+}
+```
+
+----------------------------------------
+
+TITLE: Selecting Random Subsets of Data in GraphNeT (Python)
+DESCRIPTION: This snippet demonstrates how to select a random subset of events from a `Dataset` using a specific syntax in the `DatasetConfig`. The `N random events ~ condition` syntax allows specifying a fixed number of random events that satisfy a given condition, useful for creating smaller, representative datasets for training or testing.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_5
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(..)
+dataset.config.selection = "1000 random events ~ abs(injection_type) == 14"
+```
+
+----------------------------------------
+
+TITLE: Selecting Random Subsets of Data in Python
+DESCRIPTION: This snippet demonstrates how to select a random subset of events from a dataset using the `DatasetConfig`. The `N random events ~ <condition>` syntax allows specifying a fixed number of random events that also satisfy a given condition, useful for creating smaller, representative datasets for testing or development.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_8
+
+LANGUAGE: python
+CODE:
+```
+dataset = Dataset(..)
+dataset.config.selection = "1000 random events ~ abs(injection_type) == 14"
+```
+
+----------------------------------------
+
+TITLE: Combining Multiple GraphNeT Datasets with EnsembleDataset
+DESCRIPTION: This snippet illustrates how to combine multiple GraphNeT `Dataset` instances (e.g., `SQLiteDataset`, `ParquetDataset`) into a single `EnsembleDataset`. This class allows for seamless aggregation and iteration over data from diverse sources, treating them as a unified dataset.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_2
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data import EnsembleDataset
+from graphnet.data.parquet import ParquetDataset
+from graphnet.data.sqlite import SQLiteDataset
+
+dataset_1 = SQLiteDataset(...)
+dataset_2 = SQLiteDataset(...)
+dataset_3 = ParquetDataset(...)
+
+ensemble_dataset = EnsembleDataset([dataset_1, dataset_2, dataset_3])
+```
+
+----------------------------------------
+
+TITLE: Defining Custom Truth Labels in GraphNeT
+DESCRIPTION: This snippet demonstrates how to create a custom truth label by subclassing `graphnet.training.labels.Label`. The `__call__` method is where the custom computation for the label should be implemented, returning a `torch.tensor`. This allows for on-the-fly calculation of labels not present in the default truth table.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_0
+
+LANGUAGE: python
+CODE:
+```
+import torch
+from torch_geometric.data import Data
+
+from graphnet.training.labels import Label
+
+class MyCustomLabel(Label):
+    """Class for producing my label."""
+    def __init__(self):
+        """Construct `MyCustomLabel`."""
+        # Base class constructor
+        super().__init__(key="my_custom_label")
+
+    def __call__(self, graph: Data) -> torch.tensor:
+        """Compute label for `graph`."""
+        label = ...  # Your computations here.
+        return label
+```
+
+----------------------------------------
+
+TITLE: Installing GraphNeT in IceCube CVMFS Environment (Bash)
+DESCRIPTION: This snippet provides a Bash script to install GraphNeT within an IceCube CVMFS environment. It first clones the GraphNeT repository, then sets up the CVMFS Python runtime with IceTray, updates pip, and finally installs GraphNeT with its dependencies as a user.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/installation/install.rst#_snippet_0
+
+LANGUAGE: bash
+CODE:
+```
+# Download GraphNeT
+git clone https://github.com/graphnet-team/graphnet.git
+cd graphnet
+# Open your favorite CVMFS distribution
+eval `/cvmfs/icecube.opensciencegrid.org/py3-v4.2.1/setup.sh`
+/cvmfs/icecube.opensciencegrid.org/py3-v4.2.1/RHEL_7_x86_64/metaprojects/icetray/v1.5.1/env-shell.sh
+# Update central utils
+pip install --upgrade pip>=20
+pip install wheel setuptools==59.5.0
+# Install graphnet into the CVMFS as a user
+pip install --user -r requirements/torch_cpu.txt -e .[torch,develop]
+```
+
+----------------------------------------
+
+TITLE: Instantiating ParquetDataset in GraphNeT (Python)
+DESCRIPTION: This snippet illustrates the initialization of a `ParquetDataset` from a Parquet file, mirroring the functionality of `SQLiteDataset`. It also necessitates a `GraphDefinition` to transform raw data into graph structures. The parameters are similar to `SQLiteDataset`, specifying the file `path`, `pulsemaps`, `truth_table`, `features`, and `truth`. The output is a `torch_geometric.data.Data` object, compatible with PyG.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_9
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.dataset.parquet.parquet_dataset import ParquetDataset
+from graphnet.models.detector.prometheus  import  Prometheus
+from graphnet.models.graphs  import  KNNGraph
+from graphnet.models.graphs.nodes  import  NodesAsPulses
+  
+graph_definition = KNNGraph(
+    detector=Prometheus(),
+    node_definition=NodesAsPulses(),
+    nb_nearest_neighbours=8,
+)
+
+dataset = ParquetDataset(
+    path="data/examples/parquet/prometheus/prometheus-events.parquet",
+    pulsemaps="total",
+    truth_table="mc_truth",
+    features=["sensor_pos_x", "sensor_pos_y", "sensor_pos_z", "t", ...],
+    truth=["injection_energy", "injection_zenith", ...],
+    graph_definiton = graph_definition,
+)
+
+graph = dataset[0]  # torch_geometric.data.Data
+```
+
+----------------------------------------
+
+TITLE: Demonstrating CLI Help and Execution for Data Reading in Python
+DESCRIPTION: This snippet illustrates how to interact with GraphNeT example scripts via the command-line interface. It shows how to access the help documentation for the `01_read_dataset.py` script to understand its arguments and then demonstrates a basic execution of the script to read data in SQLite format.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/examples/README.md#_snippet_0
+
+LANGUAGE: bash
+CODE:
+```
+$ python examples/02_data/01_read_dataset.py --help
+(...)
+Read a few events from data in an intermediate format.
+
+positional arguments:
+  {sqlite,parquet}
+
+optional arguments:
+  -h, --help        show this help message and exit
+$ python examples/02_data/01_read_dataset.py sqlite
+(...)
+```
+
+----------------------------------------
+
+TITLE: Filtering Events in SQLiteDataset using Selection (Python)
+DESCRIPTION: This snippet demonstrates how to create an `SQLiteDataset` instance and filter events based on a list of specific event IDs. It uses the `selection` argument to specify the desired event IDs and `index_column` to identify the column containing these IDs, ensuring only the selected events are loaded into the dataset.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/datasets/datasets.rst#_snippet_11
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.sqlite import SQLiteDataset
+
+dataset = SQLiteDataset(
+    ...,
+    index_column="event_no",
+    selection=[10, 5, 100, 21, 5001],
+)
+
+assert len(dataset) == 5
+```
+
+----------------------------------------
+
+TITLE: Adding Custom Labels to a GraphNeT Dataset
+DESCRIPTION: This snippet shows how to integrate a previously defined custom label (e.g., `MyCustomLabel`) into a GraphNeT `Dataset` instance using the `add_label` method. After adding, the custom label can be accessed like any other feature from a graph object retrieved from the dataset.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_1
+
+LANGUAGE: python
+CODE:
+```
+dataset.add_label(MyCustomLabel())
+
+graph = dataset[0]
+graph["my_custom_label"]
+>>> ...
+```
+
+----------------------------------------
+
+TITLE: Extracting Event Data from SQLite Database (Python)
+DESCRIPTION: This Python snippet demonstrates how to connect to an SQLite database and retrieve specific event data from the `pulsemap` and `truth_table`. It utilizes `sqlite3` for database connection and `pandas` for reading SQL queries into DataFrames, allowing extraction of data for a given `event_no` using the `index_column`.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/getting_started/getting_started.md#_snippet_26
+
+LANGUAGE: Python
+CODE:
+```
+import pandas as pd
+import sqlite3
+
+database = "data/examples/sqlite/prometheus/prometheus-events.db"
+pulsemap = "total"
+index_column = "event_no"
+truth_table = "mc_truth"
+event_no = 120
+
+with sqlite3.connect(database) as conn:
+    query = f"SELECT * from {pulsemap} WHERE {index_column} == {event_no}"
+    detector_response = pd.read_sql(query, conn)
+
+    query = f"SELECT * from {truth_table} WHERE {index_column} == {event_no}"
+    truth = pd.read_sql(query, conn)
+```
+
+----------------------------------------
+
+TITLE: Implementing LiquidOReader for H5 File Processing in GraphNeT (Python)
+DESCRIPTION: This Python class, `LiquidOReader`, extends `GraphNeTFileReader` to specifically handle `.h5` files from LiquidO experiments. It uses registered `Extractors` to process data from a given file path and includes a `find_files` method to locate all `.h5` files within specified directories. It returns extracted data as a dictionary of pandas DataFrames.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/data_conversion/data_conversion.rst#_snippet_2
+
+LANGUAGE: python
+CODE:
+```
+from graphnet.data.extractors.liquido import H5Extractor
+from .graphnet_file_reader import GraphNeTFileReader
+
+class LiquidOReader(GraphNeTFileReader):
+    """A class for reading h5 files from LiquidO."""
+
+    _accepted_file_extensions = [".h5"]
+    _accepted_extractors = [H5Extractor]
+
+    def __call__(self, file_path: str) -> Dict[str, pd.DataFrame]:
+        """Extract data from single parquet file.
+
+        Args:
+            file_path: Path to h5 file.
+
+        Returns:
+            Extracted data.
+        """
+        # Open file
+        outputs = {}
+        for extractor in self._extractors:
+            output = extractor(file_path)
+            if output is not None:
+                outputs[extractor._extractor_name] = output
+        return outputs
+
+    def find_files(self, path: Union[str, List[str]]) -> List[str]:
+        """Search folder(s) for h5 files.
+
+        Args:
+            path: directory to search for h5 files.
+
+        Returns:
+            List of h5 files in the folders.
+        """
+        files = []
+        if isinstance(path, str):
+            path = [path]
+        for p in path:
+            files.extend(glob(os.path.join(p, "*.h5")))
+        return files
+```
+
+----------------------------------------
+
+TITLE: Defining GPU-Specific Python Package Dependencies
+DESCRIPTION: This snippet specifies the exact versions of `torch` and `torchvision` compatible with CUDA 12.1, along with `--find-links` URLs for custom PyTorch and PyTorch Geometric wheels. These dependencies are crucial for enabling GPU acceleration within the GraphNet project.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/requirements/torch_cu121.txt#_snippet_0
+
+LANGUAGE: Python Requirements
+CODE:
+```
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==2.2.0+cu121
+torchvision==0.17.0+cu121
+--find-links https://data.pyg.org/whl/torch-2.2.0+cu121.html
+```
+
+----------------------------------------
+
+TITLE: Instantiating MyExtractor in GraphNeT (Python)
+DESCRIPTION: This snippet demonstrates how to instantiate the MyExtractor class, assigning it a specific extractor_name (e.g., "hits"). This name is crucial for the DataConverter to select and apply the extractor to relevant data tables within the file.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/integration/integration.rst#_snippet_1
+
+LANGUAGE: python
+CODE:
+```
+extractor = MyExtractor(extractor_name = "hits")
+```
+
+----------------------------------------
+
+TITLE: Specifying GPU Dependencies for Python Packages
+DESCRIPTION: This snippet lists the necessary Python packages and their versions for GPU-enabled installations, specifically for PyTorch and torchvision. It also includes --find-links to custom wheel repositories to ensure compatibility with the specified CUDA version (cu118).
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/requirements/torch_cu118.txt#_snippet_0
+
+LANGUAGE: Python Requirements
+CODE:
+```
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==2.2.0+cu118
+torchvision==0.17.0+cu118
+--find-links https://data.pyg.org/whl/torch-2.2.0+cu118.html
+```
+
+----------------------------------------
+
+TITLE: Run GraphNet Benchmarking Docker Container with Mounted Data (Bash)
+DESCRIPTION: This command runs the 'graphnet-benchmarking-image' Docker container, mounting a local 'inference_data/' directory to '/data/' inside the container. It executes the 'apply.py' script within the container, processing input from '/data/input' and saving output to '/data/output'. The script assumes the mounted directory has an 'input/' directory and will create an 'output/' directory for results.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docker/NOTES.md#_snippet_1
+
+LANGUAGE: bash
+CODE:
+```
+$ docker run --rm -it --mount type=bind,source=inference_data/,target=/data/ --name graphnet-benchmarking-container graphnet-benchmarking-image 'python apply.py /data/input /data/output graphnet_zenith 50'
+```
+
+----------------------------------------
+
+TITLE: Configuring PyTorch and PyG CPU Wheel Find Links
+DESCRIPTION: This snippet provides `find-links` arguments, typically used with `pip install -r requirements.txt` or directly on the command line, to specify alternative locations for package wheels. It points to CPU-specific builds of PyTorch and PyTorch Geometric, ensuring compatibility for non-GPU environments. These links are crucial for resolving dependencies when standard PyPI packages are not suitable or available.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/requirements/torch_cpu.txt#_snippet_0
+
+LANGUAGE: Configuration
+CODE:
+```
+--find-links https://download.pytorch.org/whl/cpu
+--find-links https://data.pyg.org/whl/torch-2.2.0+cpu.html
+```
+
+----------------------------------------
+
+TITLE: Specifying PyTorch CPU Wheel Source (Shell)
+DESCRIPTION: This snippet provides a `--find-links` argument for `pip` to locate PyTorch CPU wheel files from the official PyTorch download server. This is typically used in `requirements.txt` or directly with `pip install` to ensure specific CPU-only versions are installed.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/requirements/torch_macos.txt#_snippet_0
+
+LANGUAGE: Shell
+CODE:
+```
+--find-links https://download.pytorch.org/whl/cpu
+```
+
+----------------------------------------
+
+TITLE: Build Docker Image for GraphNet Benchmarking (Bash)
+DESCRIPTION: This command builds a Docker image named 'graphnet-benchmarking-image' using the Dockerfile located in the 'benchmarking/' directory. It tags the image for easy reference and future use.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docker/NOTES.md#_snippet_0
+
+LANGUAGE: bash
+CODE:
+```
+$ docker build -f benchmarking/dockerfile -t graphnet-benchmarking-image benchmarking/
+```
+
+----------------------------------------
+
+TITLE: Defining MyExtractor for Pickle Files in GraphNeT (Python)
+DESCRIPTION: This Python class, MyExtractor, extends the generic Extractor class in GraphNeT. Its purpose is to selectively extract specific parts of information from the input dictionary, which is expected to contain pandas DataFrames. The __call__ method, when fully implemented, would perform the actual data extraction based on the extractor_name assigned during instantiation.
+SOURCE: https://github.com/graphnet-team/graphnet/blob/main/docs/source/integration/integration.rst#_snippet_2
+
+LANGUAGE: python
+CODE:
+```
+from typing import Dict
+
+from graphnet.data.extractors import Extractor
+
+class MyExtractor(Extractor):
+    """
+    Class for extracting information from pickles files in MyExperiment
+    """
+
+    def __call__(self, dictionary: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+```

@@ -1,0 +1,119 @@
+# Example configuration for MAGIC direction reconstruction
+# Based on IceCube Kaggle competition winning strategies
+
+# Transformer-based direction reconstruction
+magic_transformer:
+  class_name: graphnet.models.standard_model.StandardModel
+  arguments:
+    graph_definition:
+      class_name: graphnet.models.graphs.KNNGraph
+      arguments:
+        nb_nearest_neighbours: 16
+        node_definition:
+          class_name: graphnet.models.graphs.nodes.NodesAsPulses
+    backbone:
+      class_name: graphnet.models.gnn.MAGICTransformer
+      arguments:
+        nb_inputs: 5  # x_cam, y_cam, t, tel_id, signal
+        hidden_dim: 256
+        num_layers: 8
+        num_heads: 8
+        use_cross_attention: true
+        pool_telescopes: "attention"
+    tasks:
+      - class_name: graphnet.models.task.MAGICDirectionReconstructionVMF
+        arguments:
+          hidden_size: 256
+          loss_function: 
+            class_name: graphnet.training.loss_functions.MAGICVMFLoss
+
+# Classification-based direction reconstruction  
+magic_classifier:
+  class_name: graphnet.models.standard_model.StandardModel
+  arguments:
+    graph_definition:
+      class_name: graphnet.models.graphs.KNNGraph
+      arguments:
+        nb_nearest_neighbours: 16
+        node_definition:
+          class_name: graphnet.models.graphs.nodes.NodesAsPulses
+    backbone:
+      class_name: graphnet.models.gnn.MAGICDirectionClassifier
+      arguments:
+        nb_inputs: 5
+        hidden_dim: 256
+        num_fine_bins: 128
+        roi_radius: 0.5
+        use_dynedge: true
+    tasks:
+      - class_name: graphnet.models.task.MAGICDirectionClassification
+        arguments:
+          hidden_size: 768  # 256 * 3 for multi-pooling
+          num_bins: 136
+          loss_function:
+            class_name: graphnet.training.loss_functions.LocallySmoothedCrossEntropyLoss
+            arguments:
+              num_bins: 136
+              smoothing_sigma: 0.5
+
+# Hybrid model combining transformer and classification
+magic_hybrid:
+  class_name: graphnet.models.standard_model.StandardModel
+  arguments:
+    graph_definition:
+      class_name: graphnet.models.graphs.KNNGraph
+      arguments:
+        nb_nearest_neighbours: 16
+        node_definition:
+          class_name: graphnet.models.graphs.nodes.NodesAsPulses
+    backbone:
+      class_name: graphnet.models.gnn.MAGICHybridModel
+      arguments:
+        nb_inputs: 5
+        hidden_dim: 256
+        transformer_layers: 6
+        transformer_heads: 8
+        num_fine_bins: 128
+        roi_radius: 0.5
+        ensemble_method: "attention"
+    tasks:
+      - class_name: graphnet.models.task.MAGICHybridDirectionTask
+        arguments:
+          hidden_size: 512  # Double for ensemble
+          num_classification_bins: 136
+          loss_function:
+            class_name: graphnet.training.loss_functions.CombinedVMFClassificationLoss
+            arguments:
+              vmf_weight: 0.7
+              classification_weight: 0.3
+              dynamic_weighting: true
+              num_classification_outputs: 136
+
+# Training configuration optimized for MAGIC
+training:
+  batch_size: 256
+  gradient_accumulation_steps: 4  # Effective batch size 1024
+  learning_rate: 3e-4
+  weight_decay: 0.01
+  warmup_epochs: 2
+  max_epochs: 50
+  
+  # Multi-stage training schedule
+  stage1_epochs: 20  # Easy events first
+  stage2_epochs: 20  # Add medium difficulty  
+  stage3_epochs: 10  # Fine-tune on all events
+  
+  # MAGIC-specific data augmentation
+  augmentation:
+    telescope_swap: true    # Swap telescope 1 and 2 data
+    time_shift: 5.0        # Random time shifts in ns
+    noise_injection: 0.1    # Add noise to signals
+    
+  # OneCycle learning rate scheduling (from IceCube winners)
+  scheduler:
+    class_name: torch.optim.lr_scheduler.OneCycleLR
+    arguments:
+      max_lr: 3e-4
+      total_steps: 50  # Total epochs
+      pct_start: 0.1   # 10% warmup
+      anneal_strategy: "cos" 
