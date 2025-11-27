@@ -54,6 +54,7 @@ class Task(Model):
         transform_inference: Optional[Callable] = None,
         transform_support: Optional[Tuple] = None,
         loss_weight: Optional[str] = None,
+        additional_batch_keys: Optional[List[str]] = None,
     ):
         """Construct `Task`.
 
@@ -109,6 +110,7 @@ class Task(Model):
         self._prediction_labels = prediction_labels
         self._inference = False
         self._loss_weight = loss_weight
+        self._additional_batch_keys = list(additional_batch_keys or [])
 
         self._transform_prediction_training: Callable[[Tensor], Tensor] = (
             lambda x: x
@@ -123,6 +125,11 @@ class Task(Model):
             transform_inference,
             transform_support,
         )
+
+    @property
+    def additional_batch_keys(self) -> List[str]:
+        """Return extra batch keys required for loss computation."""
+        return self._additional_batch_keys
 
     @final
     def _transform_prediction(

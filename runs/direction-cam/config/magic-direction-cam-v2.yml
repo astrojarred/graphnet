@@ -1,0 +1,61 @@
+# File: notebooks/magic-lmdb/direction-angular/base_final_push.yml
+arguments:
+  graph_definition:
+    ModelConfig:
+      class_name: KNNGraph
+      arguments:
+        detector:
+          ModelConfig:
+            class_name: MAGICDetectorFixed
+            arguments: {}
+        node_definition:
+          ModelConfig:
+            class_name: MAGICLimitedNodes
+            arguments:
+              max_pulses: 4096
+              sampling_strategy: "signal"
+        columns: [0, 1, 2, 3]
+        nb_nearest_neighbours: 8
+  backbone:
+    ModelConfig:
+      class_name: MagicDeepSky
+      arguments:
+        hidden_dim: 192
+        seq_length: 192
+        depth: 12
+        head_size: 64
+        n_rel: 4
+        scaled_emb: true
+        n_features: 7
+        include_dynedge: true
+        dynedge_args:
+          nb_inputs: 7
+          nb_neighbours: 8
+          post_processing_layer_sizes: [84, 96]
+          activation_layer: gelu
+          add_norm_layer: true
+          skip_readout: true
+  tasks:
+    - ModelConfig:
+        class_name: CameraPlaneReconstruction
+        arguments:
+          hidden_size: 192
+          target_labels: [true_source_camera_position, true_energy]
+          loss_function:
+            ModelConfig:
+              class_name: EnergyWeightedEuclideanDistanceLoss
+              arguments:
+                energy_scale: 100
+                energy_weight_scale: 0.25
+                energy_weight_offset: 1.75
+  optimizer_class: '!class torch.optim.adamw AdamW'
+  optimizer_kwargs:
+    lr: 1e-6
+    weight_decay: 0.05
+  scheduler_class: '!class torch.optim.lr_scheduler CosineAnnealingWarmRestarts'
+  scheduler_kwargs:
+    T_0: 21613                   
+    eta_min: 5e-7             
+  scheduler_config:
+    interval: step
+class_name: StandardModel

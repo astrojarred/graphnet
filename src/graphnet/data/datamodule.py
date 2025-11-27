@@ -12,6 +12,7 @@ from graphnet.data.dataset import (
     SQLiteDataset,
     ParquetDataset,
 )
+from graphnet.data.dataset.lmdb.lmdb_dataset import LMDBDataset
 from graphnet.utilities.logging import Logger
 from graphnet.data.dataloader import DataLoader
 
@@ -320,11 +321,11 @@ class GraphNeTDataModule(pl.LightningDataModule, Logger):
         ParquetDataset, or Dataset. Raises a TypeError if an invalid
         dataset type is detected, or if an EnsembleDataset is used.
         """
-        allowed_types = (SQLiteDataset, ParquetDataset, Dataset)
+        allowed_types = (SQLiteDataset, ParquetDataset, Dataset, LMDBDataset)
         if self._dataset not in allowed_types:
             raise TypeError(
                 "dataset_reference must be an instance "
-                "of SQLiteDataset, ParquetDataset, or Dataset."
+                "of SQLiteDataset, ParquetDataset, LMDBDataset, or Dataset."
             )
         if self._dataset is EnsembleDataset:
             raise TypeError(

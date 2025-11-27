@@ -52,6 +52,7 @@ class FEATURES:
     ]
     KAGGLE = ["x", "y", "z", "time", "charge", "auxiliary"]
     LIQUIDO = ["sipm_x", "sipm_y", "sipm_z", "t"]
+    MAGIC = ["x_cam", "y_cam", "t", "tel_id", "signal", "telescope_phi", "telescope_theta"]
 
 
 class TRUTH:
@@ -167,3 +168,4 @@ class TRUTH:
         "energy",
         "pid",
     ]
+    MAGIC = ["particle_id", "true_energy", "true_theta", "true_phi"]
