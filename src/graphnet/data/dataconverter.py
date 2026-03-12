@@ -22,6 +22,7 @@ from .extractors.liquido import H5Extractor
 from .extractors.internal import ParquetExtractor, SQLiteExtractor
 from .extractors.prometheus import PrometheusExtractor
 from .extractors.km3net import KM3NeTExtractor
+from .extractors.magic import MAGICExtractor
 
 from .dataclasses import I3FileSet, SQLiteFileSet
 
@@ -54,6 +55,7 @@ class DataConverter(ABC, Logger):
             List[PrometheusExtractor],
             List[SQLiteExtractor],
             List[KM3NeTExtractor],
+            List[MAGICExtractor],
         ],
         index_column: str = "event_no",
         num_workers: int = 1,

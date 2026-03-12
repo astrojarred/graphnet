@@ -17,17 +17,20 @@ class MAGIC(Detector):
 
     # By default, treat the telescope ID as a spatial-like z-coordinate
     xyz = ["x_cam", "y_cam", "tel_id"]
+    
+    string_id_column = None
+    sensor_id_column = None
 
-    def __init__(self, use_charge_epsilon: bool = True, **kwargs: Any) -> None:
+    def __init__(self, use_signal_epsilon: bool = True, **kwargs: Any) -> None:
         """Construct detector for the MAGIC telescopes.
 
         Args:
-            use_charge_epsilon: Whether to add a small epsilon value to charge
+            use_signal_epsilon: Whether to add a small epsilon value to signal
                 before taking log10 to avoid log(0). Defaults to True (uses
                 1e-6). Set to False if data is guaranteed to have zero-padding.
         """
         super().__init__(**kwargs)
-        self._charge_epsilon = 1e-6 if use_charge_epsilon else 0.0
+        self._signal_epsilon = 1e-6 if use_signal_epsilon else 0.0
 
     def feature_map(self) -> Dict[str, Callable]:
         """Map standardization functions to each dimension.
@@ -41,7 +44,7 @@ class MAGIC(Detector):
             "y_cam": self._xy,
             "tel_id": self._identity,
             "time": self._time,
-            "charge": self._charge,
+            "signal": self._signal,
             "telescope_phi": self._identity,
             "telescope_theta": self._identity,
         }
@@ -56,6 +59,6 @@ class MAGIC(Detector):
         t_max = 60
         return (x - t_min) / (t_max - t_min)
 
-    def _charge(self, x: torch.tensor) -> torch.tensor:
+    def _signal(self, x: torch.tensor) -> torch.tensor:
         """Add a small epsilon to avoid log(0)."""
-        return torch.log10(x + self._charge_epsilon)
+        return torch.log10(x + self._signal_epsilon)

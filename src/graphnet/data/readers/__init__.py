@@ -7,3 +7,4 @@ from .internal_sqlite_reader import SQLiteReader
 from .liquido_reader import LiquidOReader
 from .prometheus_reader import PrometheusReader
 from .km3netreader import KM3NeTReader
+from .magic_parquet_reader import MAGICParquetReader
