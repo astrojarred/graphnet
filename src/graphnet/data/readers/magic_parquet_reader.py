@@ -42,8 +42,7 @@ class MAGICParquetReader(GraphNeTFileReader):
         self,
         index_column: Optional[str] = "event_id",
         apply_cleaning: bool = False,
-        n_nodes: int | None = None,
-        frac_lowest: float | None = None,
+        cleaning_n_low: float | None = None,
         global_params: Optional[List[str]] = None,
         truth_columns: Optional[List[str]] = None,
         px: Optional[Any] = None,
@@ -52,8 +51,7 @@ class MAGICParquetReader(GraphNeTFileReader):
         super().__init__(name=__name__, class_name=self.__class__.__name__)
         self._index_column = index_column
         self._apply_cleaning = apply_cleaning
-        self._n_nodes = 1024 if (apply_cleaning and n_nodes is None) else n_nodes
-        self._frac_lowest = 0.1 if (apply_cleaning and frac_lowest is None) else frac_lowest
+        self._cleaning_n_low = cleaning_n_low
         self._global_params = (
             global_params if global_params is not None else DEFAULT_GLOBAL_COLUMNS
         )
@@ -76,15 +74,13 @@ class MAGICParquetReader(GraphNeTFileReader):
         for _, row in df.iterrows():
             cleaned = clean_magic_event(
                 row=row,
-                n_nodes=self._n_nodes,
-                frac_lowest=self._frac_lowest,
                 apply_cleaning=self._apply_cleaning,
+                cleaning_n_low=self._cleaning_n_low,
                 px=self._px,
                 py=self._py,
                 index_column=self._index_column,
                 global_params=self._global_params,
                 truth_columns=self._truth_columns,
-                is_mc=True,
             )
             event_output: OrderedDict[str, Dict[str, Any]] = OrderedDict()
             for extractor in self._extractors:

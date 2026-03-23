@@ -30,6 +30,20 @@ def simple_cleaning(
     keep[keep_indices] = True
     return keep
 
+def threshold_cleaning(
+    signal: np.ndarray,
+    med: float = 0, 
+    mad: float = 0.16, 
+    n_low: float = 6.0
+) -> np.ndarray:
+    """Clean signal using a lower threshold based on median and MAD of the signal
+    distribution across all nodes."""
+    pe_threshold = med + n_low * mad
+    
+    # Keep only nodes above the threshold
+    keep = signal > pe_threshold
+    return keep
+
 
 def _build_default_px_py(
     geometry_path: Path = DEFAULT_GEOMETRY_PATH,
@@ -79,18 +93,15 @@ def load_or_build_default_px_py(
 
 def clean_magic_event(
     row: pd.Series,
-    n_nodes: int = 1024,
-    frac_lowest: float = 0.1,
-    apply_cleaning: bool = True,
+    apply_cleaning: bool = False,
+    cleaning_n_low: float | None = None,
     px: Optional[np.ndarray] = None,
     py: Optional[np.ndarray] = None,
     index_column: Optional[str] = "event_id",
     global_params: Optional[List[str]] = None,
     truth_columns: Optional[List[str]] = None,
-    is_mc: bool = True,
 ) -> Dict[str, Any]:
     """Convert one MAGIC parquet row into a cleaned event dictionary."""
-    del is_mc
 
     if px is None or py is None:
         default_px, default_py = load_or_build_default_px_py()
@@ -125,7 +136,7 @@ def clean_magic_event(
         signal = row.waveforms.reshape(2, 51950)[tel_idx].reshape(1039, 50).reshape(-1)
         time = row.timecal.reshape(2, 50, 1039)[tel_idx].T.reshape(-1)
         if apply_cleaning:
-            keep = simple_cleaning(signal, n_nodes=n_nodes, frac_lowest=frac_lowest)
+            keep = threshold_cleaning(signal, n_low=6.0 if cleaning_n_low is None else cleaning_n_low)
         else:
             keep = np.ones(len(signal), dtype=bool)
 
@@ -155,8 +166,7 @@ def clean_magic_event(
         "y_cam": y_clean,
         "time": time_clean,
         "tel_id": tel_clean,
-        "n_nodes": n_nodes,
-        "frac_lowest": frac_lowest,
+        "cleaning_n_low": cleaning_n_low,
         "event_id": event_id,
         "truth": truth,
         "global_params": globals_dict,
