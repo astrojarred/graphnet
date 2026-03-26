@@ -9,6 +9,11 @@ import json
 import numpy as np
 import pandas as pd
 
+from graphnet.data.extractors.magic.calibration import (
+    TimecalLookup,
+    graft_mc_telescope_signal,
+)
+
 
 DEFAULT_PIXEL_CACHE_PATH = (
     Path(__file__).resolve().parent / "magic_default_pixel_coordinates.json"
@@ -270,8 +275,17 @@ def clean_magic_event(
     index_column: Optional[str] = "event_id",
     global_params: Optional[List[str]] = None,
     truth_columns: Optional[List[str]] = None,
+    graft_lookup: Optional[TimecalLookup] = None,
+    graft_timeslice_ns: float = 0.6,
+    graft_log_interpolation: bool = False,
 ) -> Dict[str, Any]:
-    """Convert one MAGIC parquet row into a cleaned event dictionary."""
+    """Convert one MAGIC parquet row into a cleaned event dictionary.
+
+    When ``graft_lookup`` is set, real per-pixel timecal from the LMDB is grafted
+    onto each telescope waveform (:func:`graft_mc_telescope_signal`) **before**
+    threshold cleaning and ``pixel_valid`` masking. The stored ``time`` channel
+    is the shifted graft grid, not parquet ``timecal``.
+    """
 
     n_pixels = int(row["n_pixels"]) if "n_pixels" in row.index and pd.notna(row.get("n_pixels")) else DEFAULT_N_PIXELS
     n_timeslices = (
@@ -314,6 +328,15 @@ def clean_magic_event(
     if index_column is not None and index_column in row:
         event_id = row[index_column]
 
+    graft_packed: tuple[np.ndarray, np.ndarray] | None = None
+    if graft_lookup is not None:
+        graft_packed = graft_lookup[int(event_id)]
+        if graft_packed is None:
+            raise ValueError(
+                f"timecal graft: no LMDB entry for event_id={event_id!r} "
+                f"(after lookup modulo / mod_shift)."
+            )
+
     n_low = 6.0 if cleaning_n_low is None else cleaning_n_low
 
     def process_telescope(
@@ -321,9 +344,21 @@ def clean_magic_event(
         time: np.ndarray,
         tel_idx: int,
         pixel_valid_sample_mask: Optional[np.ndarray],
+        graft_real_per_pixel: Optional[np.ndarray] = None,
     ) -> None:
-        signal = signal.reshape(n_pixels, n_timeslices).reshape(-1)
-        time = time.reshape(-1)
+        signal_2d = signal.reshape(n_pixels, n_timeslices)
+        if graft_real_per_pixel is not None:
+            signal_2d, shifted_time_2d = graft_mc_telescope_signal(
+                signal_2d,
+                graft_real_per_pixel,
+                timeslice_ns=graft_timeslice_ns,
+                log_interpolation=graft_log_interpolation,
+            )
+            signal = signal_2d.reshape(-1)
+            time = shifted_time_2d.reshape(-1)
+        else:
+            signal = signal_2d.reshape(-1)
+            time = time.reshape(-1)
         if signal.shape[0] != time.shape[0]:
             raise ValueError(
                 f"signal/time length mismatch: {signal.shape[0]} vs {time.shape[0]}"
@@ -366,18 +401,25 @@ def clean_magic_event(
             pv_tel = _broadcast_pixel_valid(
                 row["pixel_valid"], n_pixels, n_timeslices
             )
-        process_telescope(wf, time_flat, tel_idx, pv_tel)
+        graft_tcal = (
+            graft_packed[tel_idx] if graft_packed is not None else None
+        )
+        process_telescope(wf, time_flat, tel_idx, pv_tel, graft_tcal)
 
     elif wf.size == 2 * per_telescope:
         sig_tels = _split_stereo_waveforms(wf, n_pixels, n_timeslices)
         time_tels = _time_for_stereo_row(row, n_pixels, n_timeslices)
         pv_tels = _pixel_valid_stereo(row, n_pixels, n_timeslices)
         for tel_i in range(2):
+            graft_tcal = (
+                graft_packed[tel_i] if graft_packed is not None else None
+            )
             process_telescope(
                 sig_tels[tel_i],
                 time_tels[tel_i],
                 tel_i,
                 pv_tels[tel_i],
+                graft_tcal,
             )
 
     else:

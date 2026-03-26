@@ -26,6 +26,9 @@ __all__ = [
     "decode_timecal_row",
     "encode_timecal_row",
     "expand_parquet_sources",
+    "graft_mc_telescope_signal",
+    "interp1d_shared_xp_batch",
+    "shift_signal_graft",
     "timecal_concat",
 ]
 
@@ -54,6 +57,148 @@ def timecal_concat(m1: Any, m2: Any) -> np.ndarray:
     a1 = np.asarray(m1, dtype=np.float32).ravel()
     a2 = np.asarray(m2, dtype=np.float32).ravel()
     return np.concatenate([a1, a2])
+
+
+def interp1d_shared_xp_batch(
+    xp: np.ndarray,
+    fp: np.ndarray,
+    xq: np.ndarray,
+    *,
+    left: float = 0.0,
+    right: float = 0.0,
+) -> np.ndarray:
+    """Batched 1D linear interpolation: same monotone ``xp`` for every row of ``fp``.
+
+    Parameters
+    ----------
+    xp
+        Sample positions, shape ``(m,)``, strictly increasing.
+    fp
+        Values at ``xp``, shape ``(n, m)``.
+    xq
+        Query positions, shape ``(n, k)`` (one row of queries per row of ``fp``).
+
+    Returns
+    -------
+    Array of shape ``(n, k)``, ``float32``. Matches ``numpy.interp`` extrapolation
+    for scalar ``left`` / ``right`` outside ``[xp[0], xp[-1]]``.
+    """
+    xp_1d = np.ascontiguousarray(xp, dtype=np.float64).ravel()
+    fp_a = np.ascontiguousarray(fp, dtype=np.float64)
+    xq_a = np.ascontiguousarray(xq, dtype=np.float64)
+    if xp_1d.size < 2:
+        raise ValueError("xp must have length >= 2 for interpolation")
+    if not (fp_a.ndim == 2 and xq_a.ndim == 2):
+        raise ValueError("fp and xq must be 2-D arrays")
+    n, m = fp_a.shape
+    if xp_1d.size != m:
+        raise ValueError(f"xp has length {xp_1d.size}, expected {m} to match fp.shape[1]")
+    if xq_a.shape[0] != n:
+        raise ValueError(f"xq has {xq_a.shape[0]} rows, fp has {n}")
+    if np.any(np.diff(xp_1d) <= 0):
+        raise ValueError("xp must be strictly increasing")
+
+    j = np.searchsorted(xp_1d, xq_a, side="right")
+    j = np.clip(j, 1, m - 1)
+    x0 = xp_1d[j - 1]
+    x1 = xp_1d[j]
+    rows = np.arange(n, dtype=np.intp)[:, None]
+    y0 = fp_a[rows, j - 1]
+    y1 = fp_a[rows, j]
+    denom = x1 - x0
+    t = np.divide(
+        xq_a - x0,
+        denom,
+        out=np.zeros_like(xq_a, dtype=np.float64),
+        where=denom != 0,
+    )
+    val = y0 + t * (y1 - y0)
+    out = np.where(
+        xq_a < xp_1d[0],
+        left,
+        np.where(xq_a > xp_1d[-1], right, val),
+    )
+    return out.astype(np.float32, copy=False)
+
+
+def shift_signal_graft(
+    signal_2d: Any,
+    base_time_2d: Any,
+    shifted_time_2d: Any,
+    log_interpolation: bool = False,
+    *,
+    epsilon: float = 1e-10,
+) -> np.ndarray:
+    """Resample MC signal per pixel onto a shifted time grid (numpy, batched).
+
+    Matches the historical ``GraftTimecal.shift_signal_fast`` numerics when ``base_time``
+    is MC zeros + slice offsets (identical rows). ``base_time_2d`` must be row-wise
+    identical to within floating tolerance.
+    """
+    sig = np.asarray(signal_2d, dtype=np.float32)
+    base = np.asarray(base_time_2d, dtype=np.float32)
+    shifted = np.asarray(shifted_time_2d, dtype=np.float32)
+    if sig.shape != base.shape or sig.shape != shifted.shape:
+        raise ValueError(
+            "signal_2d, base_time_2d, shifted_time_2d must have the same shape"
+        )
+    if sig.ndim != 2:
+        raise ValueError("expected 2-D arrays (n_pixels, n_timeslices)")
+    xp = base[0].astype(np.float64, copy=False)
+    if not np.allclose(base, xp[None, :], rtol=0.0, atol=1e-5):
+        raise ValueError(
+            "base_time_2d rows must be identical (shared MC time axis); "
+            "use interp1d_shared_xp_batch directly for varying xp per row."
+        )
+
+    if log_interpolation:
+        sig_work = np.maximum(sig.astype(np.float64), epsilon)
+        fp = np.log(sig_work)
+        le = float(np.log(epsilon))
+        log_out = interp1d_shared_xp_batch(
+            xp, fp, shifted.astype(np.float64), left=le, right=le
+        )
+        return np.exp(log_out.astype(np.float64)).astype(np.float32, copy=False)
+
+    return interp1d_shared_xp_batch(
+        xp, sig.astype(np.float64), shifted.astype(np.float64), left=0.0, right=0.0
+    )
+
+
+def graft_mc_telescope_signal(
+    signal_2d: Any,
+    real_timecal_per_pixel: Any,
+    timeslice_ns: float = 0.6,
+    log_interpolation: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Graft real per-pixel time structure onto MC ``(n_pix, n_ts)`` signal.
+
+    Builds MC sample times ``k * timeslice_ns``, shifted grid
+    ``(t_real - mean(t_real)) + k * timeslice_ns`` per pixel, then
+    :func:`shift_signal_graft`.
+
+    Returns
+    -------
+    signal_out, shifted_time_2d
+        Both ``float32``, shape ``(n_pix, n_ts)``.
+    """
+    sig = np.asarray(signal_2d, dtype=np.float32)
+    if sig.ndim != 2:
+        raise ValueError("signal_2d must be 2-D")
+    n_pix, n_ts = sig.shape
+    tcal = np.asarray(real_timecal_per_pixel, dtype=np.float32).ravel()
+    if tcal.size != n_pix:
+        raise ValueError(
+            f"real_timecal_per_pixel has length {tcal.size}, expected {n_pix}"
+        )
+    time_offsets = (np.arange(n_ts, dtype=np.float32) * np.float32(timeslice_ns))
+    base_time = np.broadcast_to(time_offsets, (n_pix, n_ts))
+    mean = float(np.mean(tcal))
+    shifted_time = (tcal[:, None] - np.float32(mean)) + time_offsets
+    out = shift_signal_graft(
+        sig, base_time, shifted_time, log_interpolation=log_interpolation
+    )
+    return out, shifted_time.astype(np.float32, copy=False)
 
 
 def expand_parquet_sources(

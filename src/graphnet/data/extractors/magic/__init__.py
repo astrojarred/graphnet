@@ -19,5 +19,8 @@ from .calibration import (
     decode_timecal_row,
     encode_timecal_row,
     expand_parquet_sources,
+    graft_mc_telescope_signal,
+    interp1d_shared_xp_batch,
+    shift_signal_graft,
     timecal_concat,
 )
