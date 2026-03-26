@@ -15,49 +15,196 @@ DEFAULT_PIXEL_CACHE_PATH = (
 )
 DEFAULT_GEOMETRY_PATH = Path(__file__).resolve().parent / "geometry.json"
 
-
-def simple_cleaning(
-    signal: np.ndarray,
-    n_nodes: int = 1024,
-    frac_lowest: float = 0.1,
-) -> np.ndarray:
-    """Keep brightest nodes plus a small dimmest tail."""
-    num_bright = n_nodes - int(n_nodes * frac_lowest)
-    num_dim = int(n_nodes * frac_lowest)
-    order = np.argsort(signal)[::-1]
-    keep_indices = np.concatenate([order[:num_bright], order[-num_dim:]])
-    keep = np.zeros(len(signal), dtype=bool)
-    keep[keep_indices] = True
-    return keep
+DEFAULT_N_PIXELS = 1039
+DEFAULT_N_TIMESLICES = 50
 
 def threshold_cleaning(
     signal: np.ndarray,
-    med: float = 0, 
-    mad: float = 0.16, 
-    n_low: float = 6.0
+    med: float = 0,
+    mad: float = 0.16,
+    n_low: float = 6.0,
 ) -> np.ndarray:
-    """Clean signal using a lower threshold based on median and MAD of the signal
-    distribution across all nodes."""
+    """Clean signal using a lower threshold (p.e. scale for calibrated waveforms)."""
     pe_threshold = med + n_low * mad
-    
-    # Keep only nodes above the threshold
-    keep = signal > pe_threshold
-    return keep
+    return signal > pe_threshold
+
+
+def _expand_timecal_1d(
+    tcal_per_pixel: np.ndarray,
+    n_timeslices: int,
+    timeslice_duration: float = 1.0,
+) -> np.ndarray:
+    """Expand per-pixel start times to one value per sample (pixel-major, time fastest)."""
+    tcal = np.asarray(tcal_per_pixel, dtype=np.float32).ravel()
+    n_pixels = len(tcal)
+    time_offsets = np.arange(n_timeslices, dtype=np.float32) * np.float32(
+        timeslice_duration
+    )
+    return np.repeat(tcal, n_timeslices) + np.tile(time_offsets, n_pixels)
+
+
+def _legacy_stereo_time_flat(
+    timecal_flat: np.ndarray,
+    tel_idx: int,
+    n_pixels: int,
+    n_timeslices: int,
+) -> np.ndarray:
+    """Match legacy (2, n_ts, n_pix)[tel].T flattened order."""
+    tc = np.asarray(timecal_flat, dtype=np.float32).reshape(
+        2, n_timeslices, n_pixels
+    )
+    return tc[tel_idx].T.reshape(-1)
+
+
+def _broadcast_pixel_valid(
+    pixel_valid: np.ndarray, n_pixels: int, n_timeslices: int
+) -> np.ndarray:
+    """Broadcast per-pixel flags to per-sample mask matching waveform flatten order."""
+    pv = np.asarray(pixel_valid, dtype=bool).ravel()
+    if pv.size == n_pixels:
+        return np.repeat(pv, n_timeslices)
+    if pv.size == n_pixels * n_timeslices:
+        return pv
+    raise ValueError(
+        f"pixel_valid has length {pv.size}, expected {n_pixels} or "
+        f"{n_pixels * n_timeslices}"
+    )
+
+
+def _split_stereo_waveforms(
+    waveforms: np.ndarray, n_pixels: int, n_timeslices: int
+) -> List[np.ndarray]:
+    """Split flat stereo buffer [M1 || M2] into two per-telescope arrays."""
+    per = n_pixels * n_timeslices
+    wf = np.asarray(waveforms, dtype=np.float32).ravel()
+    if wf.size != 2 * per:
+        raise ValueError(
+            f"Expected stereo waveforms length {2 * per}, got {wf.size}"
+        )
+    return [wf[:per], wf[per:]]
+
+
+def _telescope_id_from_number(telescope_number: Any) -> int:
+    """Map MAGIC telescope_number (1/2) to internal tel_id (0/1)."""
+    try:
+        n = int(telescope_number)
+    except (TypeError, ValueError):
+        return 0
+    if n == 2:
+        return 1
+    return 0
+
+
+def _time_for_stereo_row(
+    row: pd.Series,
+    n_pixels: int,
+    n_timeslices: int,
+) -> List[np.ndarray]:
+    """Build per-telescope time arrays (length ``n_pixels * n_timeslices`` each).
+
+    Handles v5 exports:
+    - MC: no timecal (constant per MC); use zero baseline expansion.
+    - Real: ``timecal_M1`` / ``timecal_M2`` length ``n_pixels``.
+    - Legacy: full ``timecal`` length ``2 * n_ts * n_pix`` stereo layout.
+    """
+    zeros = np.zeros(n_pixels, dtype=np.float32)
+
+    if "timecal_M1" in row.index and row.get("timecal_M1") is not None:
+        t1 = np.asarray(row["timecal_M1"], dtype=np.float32).ravel()
+        t2 = (
+            np.asarray(row["timecal_M2"], dtype=np.float32).ravel()
+            if row.get("timecal_M2") is not None
+            else zeros
+        )
+        return [
+            _expand_timecal_1d(t1, n_timeslices),
+            _expand_timecal_1d(t2, n_timeslices),
+        ]
+
+    if "timecal" in row.index and row.get("timecal") is not None:
+        tc = np.asarray(row["timecal"], dtype=np.float32).ravel()
+        if tc.size == 2 * n_timeslices * n_pixels:
+            return [
+                _legacy_stereo_time_flat(tc, 0, n_pixels, n_timeslices),
+                _legacy_stereo_time_flat(tc, 1, n_pixels, n_timeslices),
+            ]
+        if tc.size == 2 * n_pixels:
+            return [
+                _expand_timecal_1d(tc[:n_pixels], n_timeslices),
+                _expand_timecal_1d(tc[n_pixels:], n_timeslices),
+            ]
+        if tc.size == n_pixels:
+            return [
+                _expand_timecal_1d(tc, n_timeslices),
+                _expand_timecal_1d(zeros, n_timeslices),
+            ]
+
+    # MC or missing timecal: placeholder times (same expansion as dl0 for uniform MC)
+    zt = _expand_timecal_1d(zeros, n_timeslices)
+    return [zt, zt]
+
+
+def _pixel_valid_stereo(
+    row: pd.Series,
+    n_pixels: int,
+    n_timeslices: int,
+) -> List[Optional[np.ndarray]]:
+    """Per-telescope pixel_valid broadcast, or split stereo ``pixel_valid``."""
+    if row.get("pixel_valid_M1") is not None or row.get("pixel_valid_M2") is not None:
+        pvm: List[Optional[np.ndarray]] = [None, None]
+        if row.get("pixel_valid_M1") is not None:
+            pvm[0] = _broadcast_pixel_valid(
+                row["pixel_valid_M1"], n_pixels, n_timeslices
+            )
+        if row.get("pixel_valid_M2") is not None:
+            pvm[1] = _broadcast_pixel_valid(
+                row["pixel_valid_M2"], n_pixels, n_timeslices
+            )
+        return pvm
+
+    pv = row.get("pixel_valid")
+    if pv is None:
+        return [None, None]
+    arr = np.asarray(pv, dtype=np.float32).ravel()
+    per = n_pixels * n_timeslices
+    if arr.size == 2 * per:
+        return [
+            _broadcast_pixel_valid(arr[:per], n_pixels, n_timeslices),
+            _broadcast_pixel_valid(arr[per:], n_pixels, n_timeslices),
+        ]
+    if arr.size == 2 * n_pixels:
+        return [
+            _broadcast_pixel_valid(arr[:n_pixels], n_pixels, n_timeslices),
+            _broadcast_pixel_valid(arr[n_pixels:], n_pixels, n_timeslices),
+        ]
+    if arr.size == n_pixels:
+        b = _broadcast_pixel_valid(arr, n_pixels, n_timeslices)
+        return [b, b]
+    if arr.size == per:
+        return [_broadcast_pixel_valid(arr, n_pixels, n_timeslices), None]
+
+    raise ValueError(f"Unsupported pixel_valid length {arr.size}")
 
 
 def _build_default_px_py(
     geometry_path: Path = DEFAULT_GEOMETRY_PATH,
+    n_pixels: int = DEFAULT_N_PIXELS,
+    n_timeslices: int = DEFAULT_N_TIMESLICES,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Build camera x/y coordinates for all pixel-time bins."""
     with geometry_path.open("r", encoding="utf-8") as f:
         geometry = json.load(f)
 
     pixel_coords = np.array(
-        [[geometry[str(p)]["x"], geometry[str(p)]["y"]] for p in range(1039)],
+        [[geometry[str(p)]["x"], geometry[str(p)]["y"]] for p in range(n_pixels)],
         dtype=np.float32,
     )
-    px = np.repeat(pixel_coords[:, 0], 50).reshape(1039, 50).flatten()
-    py = np.repeat(pixel_coords[:, 1], 50).reshape(1039, 50).flatten()
+    px = np.repeat(pixel_coords[:, 0], n_timeslices).reshape(
+        n_pixels, n_timeslices
+    ).flatten()
+    py = np.repeat(pixel_coords[:, 1], n_timeslices).reshape(
+        n_pixels, n_timeslices
+    ).flatten()
     return px, py
 
 
@@ -76,19 +223,42 @@ def _save_default_px_py_json(
 
 def load_or_build_default_px_py(
     path: Path = DEFAULT_PIXEL_CACHE_PATH,
+    n_pixels: int = DEFAULT_N_PIXELS,
+    n_timeslices: int = DEFAULT_N_TIMESLICES,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Load default px/py from JSON cache, or build and save."""
     if path.exists():
         with path.open("r", encoding="utf-8") as f:
             payload = json.load(f)
-        return (
-            np.asarray(payload["px"], dtype=np.float32),
-            np.asarray(payload["py"], dtype=np.float32),
-        )
+        px = np.asarray(payload["px"], dtype=np.float32)
+        py = np.asarray(payload["py"], dtype=np.float32)
+        expected = n_pixels * n_timeslices
+        if px.size == expected:
+            return px, py
 
-    px, py = _build_default_px_py()
+    px, py = _build_default_px_py(
+        n_pixels=n_pixels, n_timeslices=n_timeslices
+    )
     _save_default_px_py_json(px=px, py=py, path=path)
     return px.astype(np.float32), py.astype(np.float32)
+
+
+def log_size_clipped_from_row(row: pd.Series) -> float:
+    """Return log10(sum_i max(p_i, 0)) over the raw pulse train, or nan if unavailable.
+
+    Used to drop corrupt real-data flashes (typically ``log_size_clipped > 4.75``).
+    Prefers column ``waveforms`` if present, otherwise ``waveforms_pe``.
+    """
+    wf_name = "waveforms" if "waveforms" in row.index else "waveforms_pe"
+    if wf_name not in row.index:
+        return float("nan")
+    wf = np.asarray(row[wf_name], dtype=np.float64).ravel()
+    if wf.size == 0:
+        return float("nan")
+    s_clipped = float(np.clip(wf, 0.0, None).sum())
+    if s_clipped <= 0.0:
+        return float("nan")
+    return float(np.log10(s_clipped))
 
 
 def clean_magic_event(
@@ -103,10 +273,22 @@ def clean_magic_event(
 ) -> Dict[str, Any]:
     """Convert one MAGIC parquet row into a cleaned event dictionary."""
 
+    n_pixels = int(row["n_pixels"]) if "n_pixels" in row.index and pd.notna(row.get("n_pixels")) else DEFAULT_N_PIXELS
+    n_timeslices = (
+        int(row["n_timeslices"])
+        if "n_timeslices" in row.index and pd.notna(row.get("n_timeslices"))
+        else DEFAULT_N_TIMESLICES
+    )
+    per_telescope = n_pixels * n_timeslices
+
     if px is None or py is None:
-        default_px, default_py = load_or_build_default_px_py()
+        default_px, default_py = load_or_build_default_px_py(
+            n_pixels=n_pixels, n_timeslices=n_timeslices
+        )
         px = default_px if px is None else px
         py = default_py if py is None else py
+
+    wf = np.asarray(row["waveforms"], dtype=np.float32).ravel()
 
     signal_parts: List[np.ndarray] = []
     x_parts: List[np.ndarray] = []
@@ -132,20 +314,77 @@ def clean_magic_event(
     if index_column is not None and index_column in row:
         event_id = row[index_column]
 
-    for tel_idx in range(2):
-        signal = row.waveforms.reshape(2, 51950)[tel_idx].reshape(1039, 50).reshape(-1)
-        time = row.timecal.reshape(2, 50, 1039)[tel_idx].T.reshape(-1)
+    n_low = 6.0 if cleaning_n_low is None else cleaning_n_low
+
+    def process_telescope(
+        signal: np.ndarray,
+        time: np.ndarray,
+        tel_idx: int,
+        pixel_valid_sample_mask: Optional[np.ndarray],
+    ) -> None:
+        signal = signal.reshape(n_pixels, n_timeslices).reshape(-1)
+        time = time.reshape(-1)
+        if signal.shape[0] != time.shape[0]:
+            raise ValueError(
+                f"signal/time length mismatch: {signal.shape[0]} vs {time.shape[0]}"
+            )
         if apply_cleaning:
-            keep = threshold_cleaning(signal, n_low=6.0 if cleaning_n_low is None else cleaning_n_low)
+            keep = threshold_cleaning(signal, n_low=n_low)
         else:
             keep = np.ones(len(signal), dtype=bool)
+        if pixel_valid_sample_mask is not None:
+            pv = np.asarray(pixel_valid_sample_mask, dtype=bool).ravel()
+            if pv.shape[0] != keep.shape[0]:
+                raise ValueError(
+                    f"pixel_valid length {pv.shape[0]} != signal length {keep.shape[0]}"
+                )
+            keep = keep & pv
 
         signal_parts.append(signal[keep])
         x_parts.append(px[keep])
         y_parts.append(py[keep])
         time_parts.append(time[keep])
-        tel_parts.append(np.repeat(tel_idx, np.sum(keep)))
-        globals_dict[f"size_M{tel_idx + 1}"] = np.sum(signal)
+        tel_parts.append(np.repeat(tel_idx, int(np.sum(keep))))
+        globals_dict[f"size_M{tel_idx + 1}"] = float(np.sum(signal))
+
+    if wf.size == per_telescope:
+        tel_num = row.get("telescope_number")
+        tel_idx = _telescope_id_from_number(tel_num)
+        if "timecal_M1" in row.index and row.get("timecal_M1") is not None:
+            tcal_1d = np.asarray(row["timecal_M1"], dtype=np.float32).ravel()
+        elif "timecal" in row.index and row.get("timecal") is not None:
+            tcal_1d = np.asarray(row["timecal"], dtype=np.float32).ravel()
+        else:
+            tcal_1d = np.zeros(n_pixels, dtype=np.float32)
+        time_flat = _expand_timecal_1d(tcal_1d, n_timeslices)
+        pv_tel: Optional[np.ndarray] = None
+        if row.get("pixel_valid_M1") is not None:
+            pv_tel = _broadcast_pixel_valid(
+                row["pixel_valid_M1"], n_pixels, n_timeslices
+            )
+        elif row.get("pixel_valid") is not None:
+            pv_tel = _broadcast_pixel_valid(
+                row["pixel_valid"], n_pixels, n_timeslices
+            )
+        process_telescope(wf, time_flat, tel_idx, pv_tel)
+
+    elif wf.size == 2 * per_telescope:
+        sig_tels = _split_stereo_waveforms(wf, n_pixels, n_timeslices)
+        time_tels = _time_for_stereo_row(row, n_pixels, n_timeslices)
+        pv_tels = _pixel_valid_stereo(row, n_pixels, n_timeslices)
+        for tel_i in range(2):
+            process_telescope(
+                sig_tels[tel_i],
+                time_tels[tel_i],
+                tel_i,
+                pv_tels[tel_i],
+            )
+
+    else:
+        raise ValueError(
+            f"Unsupported waveforms length {wf.size} "
+            f"(expected {per_telescope} or {2 * per_telescope})"
+        )
 
     if signal_parts:
         signal_clean = np.concatenate(signal_parts)

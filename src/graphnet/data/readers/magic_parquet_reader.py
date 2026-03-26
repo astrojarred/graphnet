@@ -6,29 +6,37 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+import numpy as np
 import pandas as pd
 
 from graphnet.data.extractors.magic import (
     MAGICExtractor,
     clean_magic_event,
     load_or_build_default_px_py,
+    log_size_clipped_from_row,
 )
 from .graphnet_file_reader import GraphNeTFileReader
 
 
+# v5 MExportParquet names on merged stereo waveform rows (MC and real share these).
 DEFAULT_MC_TRUTH_COLUMNS = [
     "particle_id",
-    "energy",
-    "theta",
-    "phi",
-    "z_first_interaction",
-    "impact_M1",
-    "impact_M2",
+    "energy_gev",
+    "mc_shower_theta_rad",
+    "mc_shower_phi_rad",
+    "z_first_interaction_cm",
+    "src_cam_x_mm",
+    "src_cam_y_mm",
+    "core_x_cm",
+    "core_y_cm",
 ]
 
 DEFAULT_GLOBAL_COLUMNS = [
-    "telescope_theta",
-    "telescope_phi",
+    "mc_telescope_theta_rad",
+    "mc_telescope_phi_rad",
+    "pointing_zd_deg",
+    "pointing_az_deg",
+    "mjd",
 ]
 
 
@@ -47,11 +55,13 @@ class MAGICParquetReader(GraphNeTFileReader):
         truth_columns: Optional[List[str]] = None,
         px: Optional[Any] = None,
         py: Optional[Any] = None,
+        max_log_size_clipped: Optional[float] = 4.75,
     ) -> None:
         super().__init__(name=__name__, class_name=self.__class__.__name__)
         self._index_column = index_column
         self._apply_cleaning = apply_cleaning
         self._cleaning_n_low = cleaning_n_low
+        self._max_log_size_clipped = max_log_size_clipped
         self._global_params = (
             global_params if global_params is not None else DEFAULT_GLOBAL_COLUMNS
         )
@@ -72,6 +82,10 @@ class MAGICParquetReader(GraphNeTFileReader):
         outputs: List[OrderedDict[str, Dict[str, Any]]] = []
 
         for _, row in df.iterrows():
+            if self._max_log_size_clipped is not None:
+                lsc = log_size_clipped_from_row(row)
+                if np.isfinite(lsc) and lsc > self._max_log_size_clipped:
+                    continue
             cleaned = clean_magic_event(
                 row=row,
                 apply_cleaning=self._apply_cleaning,
