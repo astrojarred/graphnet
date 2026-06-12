@@ -43,6 +43,7 @@ class DeepIce(GNN):
         include_dynedge: bool = False,
         dynedge_args: Optional[Dict[str, Any]] = None,
         n_features: int = 6,
+        use_spacetime_rel_pos: bool = True,
     ):
         """Construct `DeepIce`.
 
@@ -62,6 +63,11 @@ class DeepIce(GNN):
                 Competition settings. If `include_dynedge` is False, this
                 argument have no impact.
             n_features: The number of features in the input data.
+            use_spacetime_rel_pos: If True, use :class:`SpacetimeEncoder` for
+                relative transformer bias (IceCube-style, memory
+                :math:`O(B N^2)` in sequence length :math:`N`). Set False for
+                large graphs (e.g. many pixels per event) to avoid huge
+                activations; attention then omits this bias.
         """
         super().__init__(seq_length, hidden_dim)
         fourier_out_dim = hidden_dim // 2 if include_dynedge else hidden_dim
@@ -72,7 +78,10 @@ class DeepIce(GNN):
             scaled=scaled_emb,
             n_features=n_features,
         )
-        self.rel_pos = SpacetimeEncoder(head_size)
+        self.use_spacetime_rel_pos = use_spacetime_rel_pos
+        self.rel_pos = (
+            SpacetimeEncoder(head_size) if use_spacetime_rel_pos else None
+        )
         self.sandwich = nn.ModuleList(
             [
                 Block_rel(
@@ -129,7 +138,9 @@ class DeepIce(GNN):
             data.x, data.batch, padding_value=0
         )
         x = self.fourier_ext(x0, seq_length)
-        rel_pos_bias = self.rel_pos(x0)
+        rel_pos_bias = (
+            self.rel_pos(x0) if self.rel_pos is not None else None
+        )
         batch_size = mask.shape[0]
         if self.include_dynedge:
             graph = self.dyn_edge(data)

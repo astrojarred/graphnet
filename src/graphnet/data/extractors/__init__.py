@@ -8,5 +8,8 @@ from .magic import (
     MAGICMCPulseExtractor,
     MAGICMCTruthExtractor,
     MAGICMCGlobalExtractor,
+    DEFAULT_MAGIC_REAL_GLOBAL_COLUMNS,
+    DEFAULT_MAGIC_REAL_TRUTH_COLUMNS,
     default_magic_mc_extractors,
+    default_magic_real_extractors,
 )

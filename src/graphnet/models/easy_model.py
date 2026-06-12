@@ -1,12 +1,15 @@
 """Suggested Model subclass that enables simple user syntax."""
 
+import os
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Union, Type
 
 import numpy as np
 import torch
+from lightning_fabric.plugins.precision.amp import _optimizer_handles_unscaling
 from pytorch_lightning import Callback, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.utilities import GradClipAlgorithmType
 from torch import Tensor
 from torch.nn import ModuleList
 from torch.optim import Adam
@@ -97,17 +100,20 @@ class EasySyntax(Model):
             accelerator = "cpu"
             devices = 1
 
-        trainer = Trainer(
-            accelerator=accelerator,
-            devices=devices,
-            max_epochs=max_epochs,
-            callbacks=callbacks,
-            log_every_n_steps=log_every_n_steps,
-            logger=logger,
-            gradient_clip_val=gradient_clip_val,
-            strategy=distribution_strategy,
-            **trainer_kwargs,
-        )
+        trainer_init: Dict[str, Any] = {
+            "accelerator": accelerator,
+            "devices": devices,
+            "max_epochs": max_epochs,
+            "callbacks": callbacks,
+            "log_every_n_steps": log_every_n_steps,
+            "logger": logger,
+            "gradient_clip_val": gradient_clip_val,
+        }
+        # PL 2.x rejects ``strategy=None``; omit so Lightning picks a default.
+        if distribution_strategy is not None:
+            trainer_init["strategy"] = distribution_strategy
+
+        trainer = Trainer(**trainer_init, **trainer_kwargs)
 
         return trainer
 
@@ -175,15 +181,26 @@ class EasySyntax(Model):
 
         # Load weights from best-fit model after training if possible
         if has_early_stopping & has_model_checkpoint:
+            checkpoint_callback: Optional[ModelCheckpoint] = None
             for callback in callbacks:
                 if isinstance(callback, ModelCheckpoint):
                     checkpoint_callback = callback
-            self.load_state_dict(
-                torch.load(
-                    checkpoint_callback.best_model_path, weights_only=False
-                )["state_dict"]
+                    break
+            best_path = (
+                checkpoint_callback.best_model_path
+                if checkpoint_callback is not None
+                else ""
             )
-            self.info("Best-fit weights from EarlyStopping loaded.")
+            if best_path and os.path.isfile(best_path):
+                self.load_state_dict(
+                    torch.load(best_path, weights_only=False)["state_dict"]
+                )
+                self.info("Best-fit weights from EarlyStopping loaded.")
+            else:
+                self.warning_once(
+                    "No checkpoint file to reload (e.g. ``fast_dev_run`` "
+                    "suppresses checkpointing). Using in-memory weights."
+                )
 
     def _print_callbacks(self, callbacks: List[Callback]) -> None:
         callback_names = []
@@ -235,6 +252,68 @@ class EasySyntax(Model):
                 }
             )
         return config
+
+    def configure_gradient_clipping(
+        self,
+        optimizer,
+        gradient_clip_val: Optional[Union[int, float]] = None,
+        gradient_clip_algorithm: Optional[str] = None,
+    ) -> None:
+        """Clip optimizer gradients (same timing/params as Lightning; see Notes).
+
+        PyTorch's fused ``clip_grad_norm_`` path (``foreach=True`` default on CUDA)
+        can stall under mixed precision + DDP when parameters mix dtypes (e.g.
+        bf16 weights with fp32 task scalars). Using ``foreach=False`` avoids that.
+
+        Fused optimizers that manage AMP unscaling themselves still use the
+        default Lightning path (which may raise instead of clipping).
+        """
+        if gradient_clip_val is None:
+            gradient_clip_val = self.trainer.gradient_clip_val
+        if gradient_clip_val is None or float(gradient_clip_val) <= 0:
+            return
+
+        if gradient_clip_algorithm is None:
+            algorithm = self.trainer.gradient_clip_algorithm
+        elif isinstance(gradient_clip_algorithm, GradClipAlgorithmType):
+            algorithm = gradient_clip_algorithm
+        else:
+            algorithm = GradClipAlgorithmType(str(gradient_clip_algorithm).lower())
+
+        if algorithm == GradClipAlgorithmType.NORM and _optimizer_handles_unscaling(
+            optimizer
+        ):
+            super().configure_gradient_clipping(
+                optimizer,
+                gradient_clip_val=gradient_clip_val,
+                gradient_clip_algorithm=gradient_clip_algorithm,
+            )
+            return
+
+        parameters = list(self.trainer.precision_plugin.main_params(optimizer))
+        if algorithm == GradClipAlgorithmType.VALUE:
+            torch.nn.utils.clip_grad_value_(
+                parameters, clip_value=float(gradient_clip_val)
+            )
+            return
+        if algorithm == GradClipAlgorithmType.NORM:
+            try:
+                torch.nn.utils.clip_grad_norm_(
+                    parameters,
+                    float(gradient_clip_val),
+                    foreach=False,
+                )
+            except TypeError:
+                torch.nn.utils.clip_grad_norm_(
+                    parameters, float(gradient_clip_val)
+                )
+            return
+
+        super().configure_gradient_clipping(
+            optimizer,
+            gradient_clip_val=gradient_clip_val,
+            gradient_clip_algorithm=gradient_clip_algorithm,
+        )
 
     def training_step(
         self, train_batch: Union[Data, List[Data]], batch_idx: int

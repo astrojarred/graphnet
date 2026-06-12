@@ -280,7 +280,14 @@ class LMDBDataset(Dataset):
             )
             for sequential_index in tqdm(range(len(self))):
                 self._update_cache(sequential_index)
+                lmdb_key = self._get_event_index(sequential_index)
                 single_entry = self._query_cache(table=table, columns=columns)
+                # Stored truth may disagree with LMDB keys; string selections
+                # must use the actual key for lookups in _update_cache.
+                if table == self._truth_table and self._index_column in columns:
+                    icol = columns.index(self._index_column)
+                    single_entry = single_entry.copy()
+                    single_entry[0, icol] = int(lmdb_key)
                 table_data.append(single_entry)
             table_data = np.concatenate(table_data, axis=0)
         return table_data

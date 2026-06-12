@@ -1,5 +1,6 @@
 """Base :py:class:`Dataset` class(es) used in GraphNeT."""
 
+import inspect
 from copy import deepcopy
 from abc import ABC, abstractmethod
 from typing import (
@@ -93,6 +94,18 @@ def parse_labels(cfg: dict) -> Dict[str, Label]:
     return labels
 
 
+def kwargs_for_dataset_init(dataset_class: Type, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop `DatasetConfig` router-only keys not accepted by `dataset_class`."""
+    sig = inspect.signature(dataset_class.__init__)
+    params = sig.parameters
+    if any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    ):
+        return dict(cfg)
+    valid = {name for name in params if name != "self"}
+    return {k: v for k, v in cfg.items() if k in valid}
+
+
 class Dataset(
     Logger,
     Configurable,
@@ -167,15 +180,18 @@ class Dataset(
         if cfg["labels"] is not None:
             cfg["labels"] = parse_labels(cfg)
 
+        ds_cls = source._dataset_class
+        init_kwargs = kwargs_for_dataset_init(ds_cls, cfg)
         if isinstance(cfg["path"], list):
             sources = []
             for path in cfg["path"]:
-                cfg["path"] = path
-                sources.append(source._dataset_class(**cfg))
+                kw = dict(init_kwargs)
+                kw["path"] = path
+                sources.append(ds_cls(**kw))
             source = EnsembleDataset(sources)
             return source
         else:
-            return source._dataset_class(**cfg)
+            return ds_cls(**init_kwargs)
 
     @classmethod
     def concatenate(

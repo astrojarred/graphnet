@@ -175,10 +175,16 @@ class FourierEncoder(LightningModule):
         )  # Length
 
         x = torch.cat(embeddings, -1)
-        x = self.mlp(x)
-
-        return x
-
+        
+        in_dtype = x.dtype
+        # bf16/fp16 matmuls through cuBLAS Lt can raise CUBLAS_STATUS_NOT_SUPPORTED
+        # on some GPU/driver/PyTorch builds (see pytorch/pytorch#107276). Run the MLP
+        # in fp32 and cast back so mixed-precision training stays stable elsewhere.
+        if x.is_cuda and in_dtype in (torch.bfloat16, torch.float16):
+            with torch.autocast(device_type="cuda", enabled=False):
+                x = self.mlp(x.float())
+            return x.to(in_dtype)
+        return self.mlp(x)
 
 class SpacetimeEncoder(LightningModule):
     """Spacetime encoder module."""

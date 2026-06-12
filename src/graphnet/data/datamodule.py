@@ -336,16 +336,23 @@ class GraphNeTDataModule(pl.LightningDataModule, Logger):
     def _validate_dataset_class(self) -> None:
         """Sanity checks on the dataset reference (self._dataset).
 
-        Checks whether the dataset is an instance of SQLiteDataset,
-        ParquetDataset, LMDBDataset, or Dataset. Raises a TypeError if
-        an invalid dataset type is detected, or if an EnsembleDataset is
-        used.
+        ``dataset_reference`` must be a dataset *class* (not an instance)
+        that subclasses SQLiteDataset, ParquetDataset, LMDBDataset, or
+        Dataset. Raises TypeError if invalid, or if EnsembleDataset is
+        passed as ``dataset_reference``.
         """
-        allowed_types = (SQLiteDataset, ParquetDataset, LMDBDataset, Dataset)
-        if self._dataset not in allowed_types:
+        if not isinstance(self._dataset, type):
             raise TypeError(
-                "dataset_reference must be an instance "
-                "of SQLiteDataset, ParquetDataset, LMDBDataset, or Dataset."
+                "dataset_reference must be an instance or subclass "
+                "of SQLiteDataset, ParquetDataset, LMDBDataset, "
+                "or Dataset."
+            )
+        allowed_bases = (SQLiteDataset, ParquetDataset, LMDBDataset, Dataset)
+        if not issubclass(self._dataset, allowed_bases):
+            raise TypeError(
+                "dataset_reference must be an instance or subclass "
+                "of SQLiteDataset, ParquetDataset, LMDBDataset, "
+                "ParquetDataset, LMDBDataset, or Dataset."
             )
         if self._dataset is EnsembleDataset:
             raise TypeError(

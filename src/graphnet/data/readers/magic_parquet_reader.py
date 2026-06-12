@@ -53,6 +53,11 @@ class MAGICParquetReader(GraphNeTFileReader):
     The LMDB is opened **lazily** on first :meth:`__call__` in each process so the
     reader stays picklable for :class:`~graphnet.data.dataconverter.DataConverter`
     multiprocessing workers.
+
+    Set ``allow_missing_truth_global_columns=True`` when using broad real-data
+    column lists so optional or version-specific parquet fields can be absent
+    without failing the whole file (missing names are skipped with a log
+    warning).
     """
 
     _accepted_file_extensions = [".parquet"]
@@ -73,12 +78,14 @@ class MAGICParquetReader(GraphNeTFileReader):
         graft_log_interpolation: bool = False,
         graft_mod_shift: int = 0,
         graft_map_size_gb: float = 8.0,
+        allow_missing_truth_global_columns: bool = False,
     ) -> None:
         super().__init__(name=__name__, class_name=self.__class__.__name__)
         self._index_column = index_column
         self._apply_cleaning = apply_cleaning
         self._cleaning_n_low = cleaning_n_low
         self._max_log_size_clipped = max_log_size_clipped
+        self._allow_missing_truth_global_columns = allow_missing_truth_global_columns
         self._global_params = (
             global_params if global_params is not None else DEFAULT_GLOBAL_COLUMNS
         )
@@ -158,6 +165,7 @@ class MAGICParquetReader(GraphNeTFileReader):
                 graft_lookup=self._graft_lookup_lazy(),
                 graft_timeslice_ns=self._graft_timeslice_ns,
                 graft_log_interpolation=self._graft_log_interpolation,
+                allow_missing_truth_global_columns=self._allow_missing_truth_global_columns,
             )
             event_output: OrderedDict[str, Dict[str, Any]] = OrderedDict()
             for extractor in self._extractors:

@@ -14,7 +14,11 @@ def collate_fn(graphs: List[Data]) -> Batch:
 
     Should not occur in "production.
     """
-    graphs = [g for g in graphs if g.n_pulses > 1]
+    graphs = [
+        g
+        for g in graphs
+        if (int(g.n_pulses.detach().cpu().item()) > 1)
+    ]
     return Batch.from_data_list(graphs)
 
 
@@ -38,17 +42,22 @@ class DataLoader(torch.utils.data.DataLoader):
         **kwargs: Any,
     ) -> None:
         """Construct `DataLoader`."""
-        # Base class constructor
-        super().__init__(
-            dataset,
+        loader_kwargs = dict(
+            dataset=dataset,
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            persistent_workers=persistent_workers,
-            prefetch_factor=prefetch_factor,
             **kwargs,
         )
+
+        if num_workers > 0:
+            loader_kwargs["persistent_workers"] = persistent_workers
+            loader_kwargs["prefetch_factor"] = prefetch_factor
+
+        # ``prefetch_factor`` and ``persistent_workers`` are only valid when
+        # multiprocessing workers are enabled.
+        super().__init__(**loader_kwargs)
 
     @classmethod
     def from_dataset_config(

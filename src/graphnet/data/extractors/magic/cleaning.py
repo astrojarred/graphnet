@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import json
+
+_logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -278,6 +281,7 @@ def clean_magic_event(
     graft_lookup: Optional[TimecalLookup] = None,
     graft_timeslice_ns: float = 0.6,
     graft_log_interpolation: bool = False,
+    allow_missing_truth_global_columns: bool = False,
 ) -> Dict[str, Any]:
     """Convert one MAGIC parquet row into a cleaned event dictionary.
 
@@ -285,6 +289,11 @@ def clean_magic_event(
     onto each telescope waveform (:func:`graft_mc_telescope_signal`) **before**
     threshold cleaning and ``pixel_valid`` masking. The stored ``time`` channel
     is the shifted graft grid, not parquet ``timecal``.
+
+    When ``allow_missing_truth_global_columns`` is True, any name in
+    ``truth_columns`` or ``global_params`` that is absent from ``row`` is skipped
+    and a warning is logged (useful for real data with optional or varying
+    exports). When False (default), a missing name raises ``KeyError``.
     """
 
     n_pixels = int(row["n_pixels"]) if "n_pixels" in row.index and pd.notna(row.get("n_pixels")) else DEFAULT_N_PIXELS
@@ -314,6 +323,13 @@ def clean_magic_event(
     if truth_columns is not None:
         for truth_key in truth_columns:
             if truth_key not in row:
+                if allow_missing_truth_global_columns:
+                    _logger.warning(
+                        "MAGIC clean_magic_event: truth column %r missing from row; "
+                        "skipping.",
+                        truth_key,
+                    )
+                    continue
                 raise KeyError(f"Column '{truth_key}' was not found in input row.")
             truth[truth_key] = row[truth_key]
 
@@ -321,6 +337,13 @@ def clean_magic_event(
     if global_params is not None:
         for param in global_params:
             if param not in row:
+                if allow_missing_truth_global_columns:
+                    _logger.warning(
+                        "MAGIC clean_magic_event: global_params column %r missing from "
+                        "row; skipping.",
+                        param,
+                    )
+                    continue
                 raise KeyError(f"Column '{param}' was not found in input row.")
             globals_dict[param] = row[param]
 

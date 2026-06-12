@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 BACKEND_LOOKUP = {
     "db": "sqlite",
     "parquet": "parquet",
+    "lmdb": "lmdb",
 }
 
 
@@ -55,6 +56,18 @@ class DatasetConfig(BaseConfig):
     loss_weight_column: Optional[str] = None
     loss_weight_default_value: Optional[float] = None
     seed: Optional[int] = None
+
+    # LMDB / MAGIC LMDB (only used when backend is lmdb; see `use_magic_lmdb`)
+    use_magic_lmdb: bool = False
+    src_cam_radius_mm: float = 400.0
+    sim_weights_pkl: Optional[str] = None
+    sim_weights_key: str = "proton_weights"
+    max_nodes: Optional[int] = None
+    max_nodes_seed: Optional[int] = None
+    max_nodes_strategy: str = "random"
+    # MAGIC LMDB: restrict which ``global`` table keys are copied onto ``Data``
+    # (``None`` = all except internal excludes in ``MAGICLMDBDataset``).
+    global_fields: Optional[List[str]] = None
 
     # DEPRECATION FIELD: REMOVE AT 2.0 LAUNCH
     # See https://github.com/graphnet-team/graphnet/issues/647
@@ -156,13 +169,17 @@ class DatasetConfig(BaseConfig):
         """Return the `Dataset` class implementation for this configuration."""
         from graphnet.data.dataset.sqlite import SQLiteDataset
         from graphnet.data.dataset.parquet import ParquetDataset
+        from graphnet.data.dataset.lmdb.lmdb_dataset import LMDBDataset
+        from graphnet.data.dataset.lmdb.magic_lmdb_dataset import (
+            MAGICLMDBDataset,
+        )
 
-        dataset_class = {
+        if self._backend == "lmdb":
+            return MAGICLMDBDataset if self.use_magic_lmdb else LMDBDataset
+        return {
             "sqlite": SQLiteDataset,
             "parquet": ParquetDataset,
         }[self._backend]
-
-        return dataset_class
 
     def as_dict(self) -> Dict[str, Dict[str, Any]]:
         """Represent ModelConfig as a dict.

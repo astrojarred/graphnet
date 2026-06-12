@@ -53,6 +53,9 @@ class Model(
                 "It is recommended to use the .pth suffix "
                 "for state_dict files."
             )
+        dirname = os.path.dirname(path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
         state_dict = self.state_dict()
         for key, value in state_dict.items():
             state_dict[key] = value.cpu()
