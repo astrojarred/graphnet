@@ -340,7 +340,14 @@ class LMDBDataset(Dataset):
         """Make sure that an LMDB connection is open."""
         if self._env is None:
             self._env = lmdb.open(
-                self._path, readonly=True, lock=False, subdir=True
+                self._path,
+                readonly=True,
+                lock=False,
+                subdir=True,
+                # Large MAGIC LMDBs often live on /scratch or network-ish
+                # storage. LMDB's default OS readahead can trigger huge
+                # useless page-cache scans for random event access.
+                readahead=False,
             )
         return self
 
