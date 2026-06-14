@@ -8,8 +8,10 @@ from tqdm import tqdm
 from torch_geometric.data import Data
 from graphnet.data.dataset.dataset import Dataset, ColumnMissingException
 from graphnet.data.utilities.lmdb_utilities import (
+    acquire_lmdb_environment,
     get_all_indices,
     get_serialization_method,
+    release_lmdb_environment,
 )
 from graphnet.training.utils import add_custom_labels, add_truth
 
@@ -339,7 +341,8 @@ class LMDBDataset(Dataset):
     def _establish_connection(self) -> "LMDBDataset":
         """Make sure that an LMDB connection is open."""
         if self._env is None:
-            self._env = lmdb.open(
+            assert isinstance(self._path, str)
+            self._env = acquire_lmdb_environment(
                 self._path,
                 readonly=True,
                 lock=False,
@@ -360,8 +363,8 @@ class LMDBDataset(Dataset):
         across processes).
         """
         if self._env is not None:
-            self._env.close()
-            del self._env
+            assert isinstance(self._path, str)
+            release_lmdb_environment(self._path)
             self._env = None
         return self
 

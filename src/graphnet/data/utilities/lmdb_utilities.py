@@ -1,5 +1,6 @@
 """LMDB-specific utility functions for use in `graphnet.data`."""
 
+import os
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 import lmdb
@@ -47,6 +48,48 @@ def _resolve_deserializer(
     return None
 
 
+_serialization_method_name_cache: Dict[str, str] = {}
+_lmdb_env_registry: Dict[str, lmdb.Environment] = {}
+_lmdb_env_refcount: Dict[str, int] = {}
+
+
+def _normalized_lmdb_path(lmdb_path: str) -> str:
+    """Canonical path for LMDB metadata cache lookups."""
+    return os.path.realpath(lmdb_path)
+
+
+def acquire_lmdb_environment(lmdb_path: str, **open_kwargs: Any) -> lmdb.Environment:
+    """Return a shared read-only LMDB environment for *lmdb_path*.
+
+    py-lmdb permits at most one ``Environment`` per path in a process. Multiple
+    ``LMDBDataset`` instances therefore reuse the same handle via reference
+    counting instead of calling ``lmdb.open`` repeatedly.
+    """
+    key = _normalized_lmdb_path(lmdb_path)
+    env = _lmdb_env_registry.get(key)
+    if env is not None:
+        _lmdb_env_refcount[key] += 1
+        return env
+
+    env = lmdb.open(lmdb_path, **open_kwargs)
+    _lmdb_env_registry[key] = env
+    _lmdb_env_refcount[key] = 1
+    return env
+
+
+def release_lmdb_environment(lmdb_path: str) -> None:
+    """Release a shared LMDB environment acquired via ``acquire_lmdb_environment``."""
+    key = _normalized_lmdb_path(lmdb_path)
+    if key not in _lmdb_env_registry:
+        return
+
+    _lmdb_env_refcount[key] -= 1
+    if _lmdb_env_refcount[key] <= 0:
+        _lmdb_env_registry[key].close()
+        del _lmdb_env_registry[key]
+        del _lmdb_env_refcount[key]
+
+
 def get_serialization_method_name(lmdb_path: str) -> Optional[str]:
     """Retrieve the serialization method name for an LMDB database.
 
@@ -58,16 +101,28 @@ def get_serialization_method_name(lmdb_path: str) -> Optional[str]:
         (e.g., "pickle", "json", "msgpack", "dill")
         or None if the metadata is not found or the database cannot be opened.
     """
+    normalized = _normalized_lmdb_path(lmdb_path)
+    cached = _serialization_method_name_cache.get(normalized)
+    if cached is not None:
+        return cached
+
+    env: Optional[lmdb.Environment] = None
     try:
-        env = lmdb.open(lmdb_path, readonly=True, lock=False, subdir=True)
+        env = acquire_lmdb_environment(
+            lmdb_path, readonly=True, lock=False, subdir=True
+        )
         with env.begin(write=False) as txn:
             metadata_key = b"__meta_serialization__"
             metadata_value = txn.get(metadata_key)
             if metadata_value is not None:
-                return metadata_value.decode("utf-8")
-        env.close()
+                method_name = metadata_value.decode("utf-8")
+                _serialization_method_name_cache[normalized] = method_name
+                return method_name
     except Exception:
         pass
+    finally:
+        if env is not None:
+            release_lmdb_environment(lmdb_path)
     return None
 
 
@@ -123,7 +178,7 @@ def query_database(
             )
 
     # Open database and retrieve record
-    env = lmdb.open(database, readonly=True, lock=False, subdir=True)
+    env = acquire_lmdb_environment(database, readonly=True, lock=False, subdir=True)
     try:
         with env.begin(write=False) as txn:
             # Convert index to key (same format as in LMDBWriter)
@@ -140,7 +195,7 @@ def query_database(
         # Re-raise other exceptions with context
         raise RuntimeError(f"Failed to query database at index {index}") from e
     finally:
-        env.close()
+        release_lmdb_environment(database)
 
 
 def _get_data_representation_metadata_dict(
@@ -163,14 +218,16 @@ def _get_data_representation_metadata_dict(
         if serialization_method is None:
             return None
 
-        env = lmdb.open(lmdb_path, readonly=True, lock=False, subdir=True)
-        with env.begin(write=False) as txn:
-            metadata_key = b"__meta_data_representations__"
-            metadata_value = txn.get(metadata_key)
-            if metadata_value is not None:
-                # Deserialize the metadata
-                return serialization_method(metadata_value)
-        env.close()
+        env = acquire_lmdb_environment(lmdb_path, readonly=True, lock=False, subdir=True)
+        try:
+            with env.begin(write=False) as txn:
+                metadata_key = b"__meta_data_representations__"
+                metadata_value = txn.get(metadata_key)
+                if metadata_value is not None:
+                    # Deserialize the metadata
+                    return serialization_method(metadata_value)
+        finally:
+            release_lmdb_environment(lmdb_path)
     except Exception:
         pass
     return None
@@ -231,7 +288,7 @@ def get_all_indices(database: str) -> List[int]:
     Raises:
         RuntimeError: If the database cannot be opened or accessed.
     """
-    env = lmdb.open(database, readonly=True, lock=False, subdir=True)
+    env = acquire_lmdb_environment(database, readonly=True, lock=False, subdir=True)
     try:
         indices: List[int] = []
         metadata_key = b"__meta_serialization__"
@@ -260,4 +317,4 @@ def get_all_indices(database: str) -> List[int]:
     except Exception as e:
         raise RuntimeError("Failed to retrieve indices from database") from e
     finally:
-        env.close()
+        release_lmdb_environment(database)
