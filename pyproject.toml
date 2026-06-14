@@ -10,7 +10,7 @@ dependencies = [
     "configupdater",
     "dill>=0.3",
     "matplotlib>=3.5",
-    "numpy>=1.22,<2.0",
+    "numpy>=1.22",
     "pandas>=1.3",
     "pyarrow",
     "pydantic",
@@ -21,33 +21,47 @@ dependencies = [
     "tqdm>=4.64",
     "wandb>=0.12",
     "polars >=0.19",
-    "torchscale==0.2.0",
+    "torchscale>=0.2.0",
     "h5py>= 3.7.0",
     "lmdb>=1.4.1",
-    "torch==2.7.0",
-    "torchvision>=0.22.0",
-    "torchaudio>=2.7.0",
-    "marimo[mcp]>=0.20.4",
     "msgpack>=1.1.2",
+    # MPCDF Viper-GPU — ROCm torch 2.9 + vendored PyG 2.7 (vendor/pyg-rocm-viper/)
+    "torch==2.9.1",
+    "pytorch-triton-rocm==3.5.1",
+    "torchvision==0.24.1",
+    "torchaudio==2.9.1",
+    "lightning==2.6.5",
+    "torch-geometric==2.7.0",
+    "torch-scatter",
+    "torch-sparse",
+    "torch-cluster",
+    "torch-spline-conv",
+    "xxhash",
+    "psutil",
 ]
-
 
 [build-system]
 requires = ["setuptools>=68.2.2", "wheel", "versioneer", "packaging>=23.3"]
 build-backend = "setuptools.build_meta"
 
-[tool.pip]
-index-url = "https://download.pytorch.org/whl/cu128"
-
-# PyG packages (pyg_lib, torch_scatter, etc.) are not on PyPI; use their wheel index
-[[tool.uv.index]]
-name = "pyg"
-url = "https://data.pyg.org/whl/torch-2.7.0+cu128.html"
-format = "flat"
-
-# Limit resolution to Linux only (pyg-lib has no Windows wheels)
 [tool.uv]
 environments = ["sys_platform == 'linux'"]
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.3"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-rocm" }
+torchvision = { index = "pytorch-rocm" }
+torchaudio = { index = "pytorch-rocm" }
+pytorch-triton-rocm = { index = "pytorch-rocm" }
+torch-scatter = { path = "vendor/pyg-rocm-viper/torch_scatter-2.1.2-cp311-cp311-linux_x86_64.whl" }
+torch-sparse = { path = "vendor/pyg-rocm-viper/torch_sparse-0.6.18-cp311-cp311-linux_x86_64.whl" }
+torch-cluster = { path = "vendor/pyg-rocm-viper/torch_cluster-1.6.3-cp311-cp311-linux_x86_64.whl" }
+torch-spline-conv = { path = "vendor/pyg-rocm-viper/torch_spline_conv-1.2.2-cp311-cp311-linux_x86_64.whl" }
+torch-geometric = { path = "vendor/pyg-rocm-viper/torch_geometric-2.7.0-py3-none-any.whl" }
 
 [dependency-groups]
 dev = [
@@ -69,16 +83,4 @@ dev = [
     "versioneer",
     "flake8",
     "marimo[recommended]>=0.20.4",
-]
-
-[project.optional-dependencies]
-torch-27 = [
-    "torch==2.7.0",
-    "torch-geometric",
-    "pyg_lib",
-    "torch_scatter",
-    "torch_sparse",
-    "torch_cluster",
-    "torch_spline_conv",
-    "pytorch-lightning>=2.0",
 ]
