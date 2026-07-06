@@ -23,6 +23,44 @@ from graphnet.models.model import Model
 from graphnet.models.task import StandardLearnedTask
 
 
+def assert_exact_event_ids(
+    df: pd.DataFrame, column: str = "event_id"
+) -> None:
+    """Raise if `column` in `df` holds floating-point event identifiers.
+
+    Integer event identifiers that have passed through a floating-point
+    representation are exact only up to 2**53 (float64) or 2**24 (float32).
+    Prediction artifacts produced by older versions of
+    `predict_as_dataframe`/`get_predictions` concatenated identifiers with
+    float predictions and therefore stored corrupted identifiers. Use this
+    guard to detect such legacy artifacts before relying on the identifiers.
+
+    Args:
+        df: DataFrame to check (e.g. loaded prediction artifact).
+        column: Name of the event-identifier column. Defaults to
+            "event_id".
+
+    Raises:
+        KeyError: If `column` is not present in `df`.
+        TypeError: If the column has a floating-point dtype, meaning the
+            identifiers cannot be trusted to be exact.
+    """
+    if column not in df.columns:
+        raise KeyError(
+            f"Column '{column}' not found in DataFrame "
+            f"(columns: {list(df.columns)})."
+        )
+    if pd.api.types.is_float_dtype(df[column]):
+        raise TypeError(
+            f"Column '{column}' has floating-point dtype "
+            f"'{df[column].dtype}'. Integer event identifiers stored as "
+            "floats are exact only up to 2**53 (float64) / 2**24 (float32) "
+            "and may be corrupted. This is characteristic of legacy "
+            "prediction artifacts that concatenated identifiers with float "
+            "predictions."
+        )
+
+
 class EasySyntax(Model):
     """A suggested Model class that comes with simple user syntax.
 
@@ -499,18 +537,15 @@ class EasySyntax(Model):
             attributes.pop(attr)
             additional_attributes.remove(attr)
 
-        data = np.concatenate(
-            [predictions]
-            + [
-                np.asarray(values)[:, np.newaxis]
-                for values in attributes.values()
-            ],
-            axis=1,
-        )
-
-        results = pd.DataFrame(
-            data, columns=prediction_columns + additional_attributes
-        )
+        # Build prediction columns from the float matrix, then attach each
+        # additional attribute as its own pandas Series with native dtype.
+        # NOTE: Identifiers (e.g. `event_id`/`event_no`) must never be
+        # concatenated with the float32 prediction matrix: int64 values are
+        # only exactly representable up to 2**24 in float32 (2**53 in
+        # float64), so concatenation silently corrupts large identifiers.
+        results = pd.DataFrame(predictions, columns=prediction_columns)
+        for attr, values in attributes.items():
+            results[attr] = pd.Series(np.asarray(values), index=results.index)
         return results
 
     def _create_default_callbacks(

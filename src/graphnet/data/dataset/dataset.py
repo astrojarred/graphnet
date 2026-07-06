@@ -633,7 +633,12 @@ class Dataset(
 
     def _query(
         self, sequential_index: int
-    ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[float]]:
+    ) -> Tuple[
+        np.ndarray,
+        Union[np.ndarray, Dict[str, np.ndarray]],
+        Optional[np.ndarray],
+        Optional[float],
+    ]:
         """Query file for event features and truth information.
 
         The returned lists have lengths corresponding to the number of pulses
@@ -688,7 +693,7 @@ class Dataset(
     def _create_graph(
         self,
         features: np.ndarray,
-        truth: np.ndarray,
+        truth: Union[np.ndarray, Dict[str, np.ndarray]],
         node_truth: Optional[np.ndarray] = None,
         loss_weight: Optional[float] = None,
     ) -> Data:
@@ -696,7 +701,13 @@ class Dataset(
 
         Args:
             features: List of tuples, containing event features.
-            truth: List of tuples, containing truth information.
+            truth: Event-level truth information. Either a homogeneous 2D
+                numpy array with columns ordered as `self._truth` (legacy
+                form, produced by e.g. the SQLite and parquet backends), or
+                a mapping `{column_name: 1-D numpy array}` where each array
+                keeps its native dtype. The mapping form preserves integer
+                event identifiers (e.g. values above 2**53) that would be
+                corrupted by upcasting to a common float dtype.
             node_truth: List of tuples, containing node-level truth.
             loss_weight: A weight associated with the event for weighing the
                 loss.
@@ -705,11 +716,18 @@ class Dataset(
             Graph object.
         """
         # Convert truth to dict
-        if len(truth.shape) == 1:
-            truth = truth.reshape(1, -1)
-        truth_dict = {
-            key: truth[:, index] for index, key in enumerate(self._truth)
-        }
+        if isinstance(truth, dict):
+            # Mapping form: native per-column dtypes are preserved.
+            truth_dict = {
+                key: np.atleast_1d(np.asarray(value))
+                for key, value in truth.items()
+            }
+        else:
+            if len(truth.shape) == 1:
+                truth = truth.reshape(1, -1)
+            truth_dict = {
+                key: truth[:, index] for index, key in enumerate(self._truth)
+            }
 
         # Define custom labels
         labels_dict = self._get_labels(truth_dict)

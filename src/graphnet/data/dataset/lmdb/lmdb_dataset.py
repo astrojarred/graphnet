@@ -1,6 +1,6 @@
 """`Dataset` class(es) for reading data from LMDB databases."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import os
 import numpy as np
 import lmdb
@@ -297,27 +297,104 @@ class LMDBDataset(Dataset):
     def _query_cache(
         self, table: str, columns: Union[List[str], str]
     ) -> np.ndarray:
-        """Query the cache for the table data."""
-        data = self._cached_data[table]
-        try:
-            table_data = [
-                np.array(data[column]).reshape(-1, 1) for column in columns
-            ]
-        except KeyError:
-            missing = []
-            for column in columns:
-                if column not in data.keys():
-                    missing.append(column)
+        """Query the cache for the table data as a homogeneous matrix.
 
+        NOTE: Concatenating all columns into a single 2D array forces a
+        common dtype (e.g. int64 identifiers are upcast to float64 if any
+        float column is present). Use `_query_cache_as_mapping` when native
+        per-column dtypes must be preserved (e.g. event identifiers larger
+        than 2**53, which are not exactly representable as float64).
+        """
+        mapping = self._query_cache_as_mapping(table=table, columns=columns)
+        table_data = [
+            np.asarray(values).reshape(-1, 1) for values in mapping.values()
+        ]
+        return np.concatenate(table_data, axis=1)
+
+    def _query_cache_as_mapping(
+        self, table: str, columns: Union[List[str], str]
+    ) -> Dict[str, np.ndarray]:
+        """Query the cache, preserving the native dtype of each column.
+
+        Args:
+            table: Table name (extractor name) to query.
+            columns: Columns to read out.
+
+        Returns:
+            Mapping `{column_name: 1-D numpy array}` where each array keeps
+            the dtype it was stored with (e.g. `int64` event identifiers
+            stay `int64` instead of being upcast to `float64`).
+        """
+        if isinstance(columns, str):
+            columns = [columns]
+        data = self._cached_data[table]
+        missing = [column for column in columns if column not in data.keys()]
+        if missing:
             raise ColumnMissingException(
                 f"Columns '{missing}' not found in table '{table}'."
             )
+        return {
+            column: np.atleast_1d(np.asarray(data[column]))
+            for column in columns
+        }
 
-        table_data = [
-            np.array(data[column]).reshape(-1, 1) for column in columns
-        ]
-        table_data = np.concatenate(table_data, axis=1)
-        return table_data
+    def query_table_as_mapping(
+        self,
+        table: str,
+        columns: Union[List[str], str],
+        sequential_index: int,
+    ) -> Dict[str, np.ndarray]:
+        """Query a table at a specific index, preserving column dtypes.
+
+        Unlike `query_table`, which returns a single homogeneous matrix
+        (thereby upcasting integer identifiers to floats when mixed with
+        float columns), this returns a mapping
+        `{column_name: native-dtype 1-D numpy array}`.
+
+        Args:
+            table: Table name (extractor name) to query.
+            columns: Columns to read out.
+            sequential_index: Sequential index of the event to query.
+
+        Returns:
+            Mapping from column name to 1-D numpy array with native dtype.
+        """
+        if isinstance(columns, str):
+            columns = [columns]
+
+        tables = self._get_tables()
+        if table not in tables:
+            raise ColumnMissingException(
+                f"Table '{table}' not found in database ({tables})."
+            )
+
+        self._update_cache(sequential_index)
+        return self._query_cache_as_mapping(table=table, columns=columns)
+
+    def _query(
+        self, sequential_index: int
+    ) -> Tuple[
+        np.ndarray,
+        Dict[str, np.ndarray],
+        Optional[np.ndarray],
+        Optional[float],
+    ]:
+        """Query file for event features and truth information.
+
+        Overrides the base implementation so that event-level truth travels
+        as a mapping `{column_name: native-dtype 1-D numpy array}` instead
+        of a single homogeneous matrix. This preserves integer event
+        identifiers (e.g. MAGIC packed `event_id` values above 2**53) that
+        would otherwise be corrupted by upcasting to float64. Node features
+        remain a homogeneous float matrix.
+        """
+        features, _, node_truth, loss_weight = super()._query(
+            sequential_index
+        )
+        truth = self.query_table_as_mapping(
+            self._truth_table, self._truth, sequential_index
+        )
+        return features, truth, node_truth, loss_weight
 
     def _get_all_indices(self) -> List[int]:
         """Return a list of all unique values in `self._index_column`."""

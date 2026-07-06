@@ -385,12 +385,15 @@ class DataRepresentation(Model):
             data with labels
         """
         # Write attributes, either target labels, truth info or original
-        # features.
+        # features. Dtypes are preserved deliberately: integer truth (e.g.
+        # event identifiers above 2**53) must never be inferred from - or
+        # promoted to - floating point values, which are exact only up to
+        # 2**53 (float64) / 2**24 (float32).
 
         for truth_dict in truth_dicts:
             for key, value in truth_dict.items():
                 try:
-                    label = torch.tensor(value)
+                    label = self._truth_value_to_tensor(value)
                     if self._repeat_labels:
                         label = self._label_repeater(label, data)
                     data[key] = label
@@ -404,6 +407,28 @@ class DataRepresentation(Model):
                         )
                     )
         return data
+
+    def _truth_value_to_tensor(self, value: Any) -> torch.Tensor:
+        """Convert a truth value to a tensor, preserving its dtype family.
+
+        - Integer (signed/unsigned) values become `torch.int64`, keeping
+          identifiers such as `event_id`/`event_no` bit-exact.
+        - Boolean values become `torch.bool`.
+        - Floating point values are cast to the configured float dtype
+          (`self.dtype`).
+        - Anything else is handed to `torch.tensor` directly, which raises
+          `TypeError` for unsupported types (e.g. `str`).
+        """
+        if isinstance(value, torch.Tensor):
+            return value
+        array = np.asarray(value)
+        if array.dtype.kind in "iu":
+            return torch.tensor(array, dtype=torch.int64)
+        if array.dtype.kind == "b":
+            return torch.tensor(array, dtype=torch.bool)
+        if array.dtype.kind == "f":
+            return torch.tensor(array, dtype=self.dtype)
+        return torch.tensor(value)
 
     def _set_output_feature_names(
         self, input_feature_names: List[str]

@@ -29,6 +29,10 @@ PROTON_PARTICLE_ID = 14
 
 # Do not copy these from LMDB `global` onto Data. They are derived from the
 # uncapped node count, and `n_pulses` in globals would clobber that metadata.
+# `event_id`/`event_no` must stay excluded even though truth-table transport
+# now preserves integer dtypes (via `LMDBDataset.query_table_as_mapping`):
+# the global-copy loop below casts values through `float(...)`, which would
+# corrupt packed identifiers above 2**53.
 _EXCLUDE_GLOBAL_COPY = frozenset(
     ("event_id", "event_no", "n_pulses", "global_n_pulses_log10")
 )

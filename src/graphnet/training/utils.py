@@ -287,17 +287,15 @@ def get_predictions(
                     )
             attributes[attr].extend(attribute)
 
-    data = np.concatenate(
-        [predictions]
-        + [
-            np.asarray(values)[:, np.newaxis] for values in attributes.values()
-        ],
-        axis=1,
-    )
-
-    results = pd.DataFrame(
-        data, columns=prediction_columns + additional_attributes
-    )
+    # Build prediction columns from the float matrix, then attach each
+    # additional attribute as its own pandas Series with native dtype.
+    # NOTE: Identifiers (e.g. `event_id`/`event_no`) must never be
+    # concatenated with the float32 prediction matrix: int64 values are only
+    # exactly representable up to 2**24 in float32 (2**53 in float64), so
+    # concatenation silently corrupts large identifiers.
+    results = pd.DataFrame(predictions, columns=prediction_columns)
+    for attr, values in attributes.items():
+        results[attr] = pd.Series(np.asarray(values), index=results.index)
     return results
 
 
@@ -376,7 +374,10 @@ def add_truth(
     Args:
         data: data where the label will be stored
         truth_dicts: dictionary containing the labels
-        dtype: dtype of the truth labels
+        dtype: dtype used for floating-point truth labels. Integer truth
+            values are stored as `torch.int64` and booleans as `torch.bool`
+            to keep identifiers (e.g. `event_id`/`event_no` above 2**53)
+            bit-exact rather than promoting them to floats.
         repeat_labels_by: If specified, repeats the labels along the
             specified dimension.
 
@@ -390,7 +391,16 @@ def add_truth(
     for truth_dict in truth_dicts:
         for key, value in truth_dict.items():
             try:
-                label = torch.tensor(value, dtype=dtype)
+                if isinstance(value, torch.Tensor):
+                    label = value
+                else:
+                    array = np.asarray(value)
+                    if array.dtype.kind in "iu":
+                        label = torch.tensor(array, dtype=torch.int64)
+                    elif array.dtype.kind == "b":
+                        label = torch.tensor(array, dtype=torch.bool)
+                    else:
+                        label = torch.tensor(value, dtype=dtype)
                 if repeat_labels_by is not None:
                     label = label.repeat(data.x.shape[repeat_labels_by], 1)
                 data[key] = label
