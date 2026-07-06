@@ -1,0 +1,248 @@
+{
+  "metadata": {
+    "generator": "Mars/macros/gen_mstarcam_parity_fixtures.cc (schema-v6 branch)",
+    "source": "Mars/mstarcam/MStarCamTrans.cc",
+    "geometry": "MGeomCamMagicTwo",
+    "camera_dist_m": 17,
+    "camera_dist_mm": 17000,
+    "camera_mm2deg": 0.0033703399822115898,
+    "observatory": "MObservatory default (kMagic1)",
+    "observatory_latitude_deg": 28.761794999999996,
+    "observatory_longitude_deg": -17.890701388888889,
+    "units": {"zd": "deg", "az": "deg", "dec": "deg", "ha": "hours", "x": "mm", "y": "mm"},
+    "conventions": "Loc0LocToCam(zd0,az0,zd,az)->(x,y); Loc0CamToLoc(zd0,az0,x,y)->(zd,az); Cel0CelToCam(dec0,ha0,dec,ha)->(x,y). '0' = camera-centre (pointing) direction."
+  },
+  "fixtures": [
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 5, "pointing_az_deg": 30, "direction_zd_deg": 5.0999999999999996, "direction_az_deg": 30},
+      "expected_outputs": {"cam_x_mm": -0, "cam_y_mm": 29.670627411209729},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 5, "pointing_az_deg": 30, "cam_x_mm": -0, "cam_y_mm": 29.670627411209729},
+      "expected_outputs": {"direction_zd_deg": 5.0999999999999996, "direction_az_deg": 29.999999999999996},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 10, "pointing_az_deg": 90, "direction_zd_deg": 10.5, "direction_az_deg": 91},
+      "expected_outputs": {"cam_x_mm": -54.06994320626729, "cam_y_mm": 147.89277489041962},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 10, "pointing_az_deg": 90, "cam_x_mm": -54.06994320626729, "cam_y_mm": 147.89277489041962},
+      "expected_outputs": {"direction_zd_deg": 10.500000000000002, "direction_az_deg": 91},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 20, "pointing_az_deg": 180, "direction_zd_deg": 19.600000000000001, "direction_az_deg": 180.40000000000001},
+      "expected_outputs": {"cam_x_mm": -39.812951865680233, "cam_y_mm": -118.81524198583475},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 20, "pointing_az_deg": 180, "cam_x_mm": -39.812951865680233, "cam_y_mm": -118.81524198583475},
+      "expected_outputs": {"direction_zd_deg": 19.599999999999998, "direction_az_deg": 180.40000000000001},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 25, "pointing_az_deg": 275, "direction_zd_deg": 25, "direction_az_deg": 276},
+      "expected_outputs": {"cam_x_mm": -125.39040736285526, "cam_y_mm": -0.99174135033816546},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 25, "pointing_az_deg": 275, "cam_x_mm": -125.39040736285526, "cam_y_mm": -0.99174135033816546},
+      "expected_outputs": {"direction_zd_deg": 25.000000000000004, "direction_az_deg": 276},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 30, "pointing_az_deg": 45, "direction_zd_deg": 31.199999999999999, "direction_az_deg": 44.5},
+      "expected_outputs": {"cam_x_mm": 76.867494881965882, "cam_y_mm": 355.81228448902834},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 30, "pointing_az_deg": 45, "cam_x_mm": 76.867494881965882, "cam_y_mm": 355.81228448902834},
+      "expected_outputs": {"direction_zd_deg": 31.200000000000006, "direction_az_deg": 44.5},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 35, "pointing_az_deg": 120, "direction_zd_deg": 34, "direction_az_deg": 121.5},
+      "expected_outputs": {"cam_x_mm": -248.91065133476411, "cam_y_mm": -299.43786697982989},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 35, "pointing_az_deg": 120, "cam_x_mm": -248.91065133476411, "cam_y_mm": -299.43786697982989},
+      "expected_outputs": {"direction_zd_deg": 34, "direction_az_deg": 121.5},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 40, "pointing_az_deg": 200, "direction_zd_deg": 41, "direction_az_deg": 199},
+      "expected_outputs": {"cam_x_mm": 194.68890648822924, "cam_y_mm": 295.45363850212493},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 40, "pointing_az_deg": 200, "cam_x_mm": 194.68890648822924, "cam_y_mm": 295.45363850212493},
+      "expected_outputs": {"direction_zd_deg": 41, "direction_az_deg": 199},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 45, "pointing_az_deg": 310, "direction_zd_deg": 44.399999999999999, "direction_az_deg": 311.19999999999999},
+      "expected_outputs": {"cam_x_mm": -249.13563117877524, "cam_y_mm": -179.89427977940954},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 45, "pointing_az_deg": 310, "cam_x_mm": -249.13563117877524, "cam_y_mm": -179.89427977940954},
+      "expected_outputs": {"direction_zd_deg": 44.399999999999999, "direction_az_deg": 311.19999999999999},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 55, "pointing_az_deg": 250, "direction_zd_deg": 56.5, "direction_az_deg": 249},
+      "expected_outputs": {"cam_x_mm": 247.51691151606573, "cam_y_mm": 443.96804796598849},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 55, "pointing_az_deg": 250, "cam_x_mm": 247.51691151606573, "cam_y_mm": 443.96804796598849},
+      "expected_outputs": {"direction_zd_deg": 56.5, "direction_az_deg": 248.99999999999997},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "MC telescope/shower direction pair",
+      "inputs": {"pointing_zd_deg": 60, "pointing_az_deg": 10, "direction_zd_deg": 58.5, "direction_az_deg": 11},
+      "expected_outputs": {"cam_x_mm": -253.08577477229881, "cam_y_mm": -446.31507667886171},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0CamToLoc",
+      "description": "inverse of the previous Loc0LocToCam entry",
+      "inputs": {"pointing_zd_deg": 60, "pointing_az_deg": 10, "cam_x_mm": -253.08577477229881, "cam_y_mm": -446.31507667886171},
+      "expected_outputs": {"direction_zd_deg": 58.5, "direction_az_deg": 11},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "Mrk421 wobble W1: pointing dec = source dec + 0.4 deg",
+      "inputs": {"pointing_dec_deg": 38.608799999999995, "pointing_ha_hours": 0.80000000000000004, "source_dec_deg": 38.208799999999997, "source_ha_hours": 0.80000000000000004},
+      "expected_outputs": {"cam_x_mm": 89.419694358119841, "cam_y_mm": -78.038999469789175},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "Mrk421 wobble W2: pointing dec = source dec - 0.4 deg",
+      "inputs": {"pointing_dec_deg": 37.808799999999998, "pointing_ha_hours": 0.80000000000000004, "source_dec_deg": 38.208799999999997, "source_ha_hours": 0.80000000000000004},
+      "expected_outputs": {"cam_x_mm": -92.753204108647935, "cam_y_mm": 74.046001275708392},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "Mrk421 wobble W3: pointing HA = source HA - 0.4deg/cos(dec)/15",
+      "inputs": {"pointing_dec_deg": 38.208799999999997, "pointing_ha_hours": 0.766062662801272, "source_dec_deg": 38.208799999999997, "source_ha_hours": 0.80000000000000004},
+      "expected_outputs": {"cam_x_mm": 78.041944066278134, "cam_y_mm": 89.416926206556596},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "Mrk421 wobble W4: pointing HA = source HA + 0.4deg/cos(dec)/15",
+      "inputs": {"pointing_dec_deg": 38.208799999999997, "pointing_ha_hours": 0.83393733719872809, "source_dec_deg": 38.208799999999997, "source_ha_hours": 0.80000000000000004},
+      "expected_outputs": {"cam_x_mm": -74.207078962614773, "cam_y_mm": -92.624193155520004},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "camera centre: direction identical to pointing",
+      "inputs": {"pointing_zd_deg": 30, "pointing_az_deg": 120, "direction_zd_deg": 30, "direction_az_deg": 120},
+      "expected_outputs": {"cam_x_mm": -0, "cam_y_mm": 0},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "camera centre: source identical to pointing",
+      "inputs": {"pointing_dec_deg": 38.208799999999997, "pointing_ha_hours": 0.80000000000000004, "source_dec_deg": 38.208799999999997, "source_ha_hours": 0.80000000000000004},
+      "expected_outputs": {"cam_x_mm": -0, "cam_y_mm": 0},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "azimuth wrap: pointing az 359.5, direction az 0.5",
+      "inputs": {"pointing_zd_deg": 30, "pointing_az_deg": 359.5, "direction_zd_deg": 30.199999999999999, "direction_az_deg": 0.5},
+      "expected_outputs": {"cam_x_mm": -149.24807182398288, "cam_y_mm": 58.215738291319028},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Loc0LocToCam",
+      "description": "azimuth wrap: pointing az 0.2, direction az 359.8",
+      "inputs": {"pointing_zd_deg": 25, "pointing_az_deg": 0.20000000000000001, "direction_zd_deg": 24.800000000000001, "direction_az_deg": 359.80000000000001},
+      "expected_outputs": {"cam_x_mm": 49.781689230284037, "cam_y_mm": -59.499182477315649},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "HA wrap: pointing HA 23.99 h, source HA 0.01 h",
+      "inputs": {"pointing_dec_deg": 38.208799999999997, "pointing_ha_hours": 23.989999999999998, "source_dec_deg": 38.508800000000001, "source_ha_hours": 0.01},
+      "expected_outputs": {"cam_x_mm": 70.893347283611405, "cam_y_mm": 88.143589604159928},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "HA anti-meridian: pointing HA 12.01 h, source HA 11.99 h",
+      "inputs": {"pointing_dec_deg": 38.208799999999997, "pointing_ha_hours": 12.01, "source_dec_deg": 37.908799999999999, "source_ha_hours": 11.99},
+      "expected_outputs": {"cam_x_mm": 70.008716998384926, "cam_y_mm": 89.074497287425302},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "negative HA representation: -0.5 h vs -0.45 h",
+      "inputs": {"pointing_dec_deg": 38.208799999999997, "pointing_ha_hours": -0.5, "source_dec_deg": 38.208799999999997, "source_ha_hours": -0.45000000000000001},
+      "expected_outputs": {"cam_x_mm": 142.49200537337597, "cam_y_mm": -101.35262422348455},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "corrected pointing != nominal (W1 + starguider deviation)",
+      "inputs": {"pointing_corr_dec_deg": 38.628799999999998, "pointing_corr_ha_hours": 0.8014, "source_dec_deg": 38.208799999999997, "source_ha_hours": 0.80000000000000004, "nominal_dec_deg": 38.608799999999995, "nominal_ha_hours": 0.80000000000000004, "dev_dec_deg": -0.02, "dev_ha_hours": -0.0014},
+      "expected_outputs": {"cam_x_mm": 90.665041209230807, "cam_y_mm": -85.635939201441616},
+      "camera_dist_mm": 17000
+    },
+    {
+      "function": "Cel0CelToCam",
+      "description": "corrected pointing != nominal (W4 + starguider deviation)",
+      "inputs": {"pointing_corr_dec_deg": 38.193799999999996, "pointing_corr_ha_hours": 0.83173733719872811, "source_dec_deg": 38.208799999999997, "source_ha_hours": 0.80000000000000004, "nominal_dec_deg": 38.208799999999997, "nominal_ha_hours": 0.83393733719872809, "dev_dec_deg": 0.014999999999999999, "dev_ha_hours": 0.0022000000000000001},
+      "expected_outputs": {"cam_x_mm": -72.917838725618353, "cam_y_mm": -83.810286542663093},
+      "camera_dist_mm": 17000
+    }
+  ]
+}
