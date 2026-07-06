@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,9 +14,48 @@ import numpy as np
 import pandas as pd
 
 from graphnet.data.extractors.magic.calibration import (
+    VALID_TIMECAL_CENTERING,
     TimecalLookup,
+    center_timecal_per_pixel,
     graft_mc_telescope_signal,
 )
+
+# Effective default MC-graft timeslice duration (ns) when nothing is passed.
+MC_GRAFT_TIMESLICE_DURATION_DEFAULT = 0.6
+
+
+def resolve_mc_graft_duration(
+    mc_graft_timeslice_duration: Optional[float] = None,
+    graft_timeslice_ns: Optional[float] = None,
+) -> float:
+    """Resolve the MC-graft timeslice duration, honoring the deprecated alias.
+
+    ``graft_timeslice_ns`` is the deprecated name for
+    ``mc_graft_timeslice_duration``. Passing it emits a ``DeprecationWarning`` and
+    maps onto the new name. Passing BOTH with different values raises
+    ``ValueError``. When neither is given, the effective default
+    (:data:`MC_GRAFT_TIMESLICE_DURATION_DEFAULT`, 0.6) is returned.
+    """
+    if graft_timeslice_ns is not None:
+        warnings.warn(
+            "graft_timeslice_ns is deprecated; use mc_graft_timeslice_duration "
+            "instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if (
+            mc_graft_timeslice_duration is not None
+            and float(mc_graft_timeslice_duration) != float(graft_timeslice_ns)
+        ):
+            raise ValueError(
+                "Conflicting timeslice-duration arguments: "
+                f"mc_graft_timeslice_duration={mc_graft_timeslice_duration} vs "
+                f"deprecated graft_timeslice_ns={graft_timeslice_ns}; pass only one."
+            )
+        return float(graft_timeslice_ns)
+    if mc_graft_timeslice_duration is None:
+        return MC_GRAFT_TIMESLICE_DURATION_DEFAULT
+    return float(mc_graft_timeslice_duration)
 
 
 DEFAULT_PIXEL_CACHE_PATH = (
@@ -107,6 +147,8 @@ def _time_for_stereo_row(
     row: pd.Series,
     n_pixels: int,
     n_timeslices: int,
+    real_timecal_centering: str = "none",
+    real_timeslice_duration: float = 1.0,
 ) -> List[np.ndarray]:
     """Build per-telescope time arrays (length ``n_pixels * n_timeslices`` each).
 
@@ -114,19 +156,32 @@ def _time_for_stereo_row(
     - MC: no timecal (constant per MC); use zero baseline expansion.
     - Real: ``timecal_M1`` / ``timecal_M2`` length ``n_pixels``.
     - Legacy: full ``timecal`` length ``2 * n_ts * n_pix`` stereo layout.
+
+    ``real_timecal_centering`` and ``real_timeslice_duration`` are the orthogonal
+    timing-origin and timing-stride controls; they apply to the real
+    ``timecal_M1`` / ``timecal_M2`` path only. The legacy ``timecal`` and MC
+    placeholder paths keep their historical (uncentered, unit-stride) expansion.
     """
     zeros = np.zeros(n_pixels, dtype=np.float32)
 
     if "timecal_M1" in row.index and row.get("timecal_M1") is not None:
-        t1 = np.asarray(row["timecal_M1"], dtype=np.float32).ravel()
+        t1 = center_timecal_per_pixel(
+            row["timecal_M1"],
+            n_pixels=n_pixels,
+            centering=real_timecal_centering,
+        )
         t2 = (
-            np.asarray(row["timecal_M2"], dtype=np.float32).ravel()
+            center_timecal_per_pixel(
+                row["timecal_M2"],
+                n_pixels=n_pixels,
+                centering=real_timecal_centering,
+            )
             if row.get("timecal_M2") is not None
             else zeros
         )
         return [
-            _expand_timecal_1d(t1, n_timeslices),
-            _expand_timecal_1d(t2, n_timeslices),
+            _expand_timecal_1d(t1, n_timeslices, real_timeslice_duration),
+            _expand_timecal_1d(t2, n_timeslices, real_timeslice_duration),
         ]
 
     if "timecal" in row.index and row.get("timecal") is not None:
@@ -279,22 +334,58 @@ def clean_magic_event(
     global_params: Optional[List[str]] = None,
     truth_columns: Optional[List[str]] = None,
     graft_lookup: Optional[TimecalLookup] = None,
-    graft_timeslice_ns: float = 0.6,
+    mc_graft_timeslice_duration: Optional[float] = None,
+    real_timecal_centering: str = "none",
+    real_timeslice_duration: float = 1.0,
     graft_log_interpolation: bool = False,
     allow_missing_truth_global_columns: bool = False,
+    graft_timeslice_ns: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Convert one MAGIC parquet row into a cleaned event dictionary.
+
+    Three orthogonal timing controls are threaded through this function:
+
+    - ``real_timecal_centering`` (``"none"`` | ``"per_telescope_mean"``, default
+      ``"none"``): timing ORIGIN for the real ``timecal_M1`` / ``timecal_M2``
+      path. ``"per_telescope_mean"`` subtracts the per-telescope arithmetic mean
+      over all pixels (computed BEFORE cleaning/masking).
+    - ``real_timeslice_duration`` (default ``1.0``): timing STRIDE (ns) between
+      consecutive samples on the real path.
+    - ``mc_graft_timeslice_duration`` (default ``0.6``): timing STRIDE (ns) used
+      when grafting. ``graft_timeslice_ns`` is a deprecated alias for it.
+
+    The defaults reproduce the legacy behaviour bit-for-bit. The MC graft is
+    always mean-centered (canonical) regardless of ``real_timecal_centering``,
+    which controls the real path only.
 
     When ``graft_lookup`` is set, real per-pixel timecal from the LMDB is grafted
     onto each telescope waveform (:func:`graft_mc_telescope_signal`) **before**
     threshold cleaning and ``pixel_valid`` masking. The stored ``time`` channel
     is the shifted graft grid, not parquet ``timecal``.
 
+    The effective timing settings are returned under the ``"timing_settings"``
+    key so a later conversion-manifest feature can record them.
+
     When ``allow_missing_truth_global_columns`` is True, any name in
     ``truth_columns`` or ``global_params`` that is absent from ``row`` is skipped
     and a warning is logged (useful for real data with optional or varying
     exports). When False (default), a missing name raises ``KeyError``.
     """
+
+    if real_timecal_centering not in VALID_TIMECAL_CENTERING:
+        raise ValueError(
+            f"unknown real_timecal_centering {real_timecal_centering!r}; "
+            f"expected one of {VALID_TIMECAL_CENTERING}"
+        )
+    mc_graft_duration = resolve_mc_graft_duration(
+        mc_graft_timeslice_duration, graft_timeslice_ns
+    )
+    timing_settings = {
+        "real_timecal_centering": real_timecal_centering,
+        "real_timeslice_duration": float(real_timeslice_duration),
+        "mc_graft_timeslice_duration": float(mc_graft_duration),
+        "grafting": graft_lookup is not None,
+    }
 
     n_pixels = int(row["n_pixels"]) if "n_pixels" in row.index and pd.notna(row.get("n_pixels")) else DEFAULT_N_PIXELS
     n_timeslices = (
@@ -374,7 +465,7 @@ def clean_magic_event(
             signal_2d, shifted_time_2d = graft_mc_telescope_signal(
                 signal_2d,
                 graft_real_per_pixel,
-                timeslice_ns=graft_timeslice_ns,
+                timeslice_ns=mc_graft_duration,
                 log_interpolation=graft_log_interpolation,
             )
             signal = signal_2d.reshape(-1)
@@ -409,12 +500,20 @@ def clean_magic_event(
         tel_num = row.get("telescope_number")
         tel_idx = _telescope_id_from_number(tel_num)
         if "timecal_M1" in row.index and row.get("timecal_M1") is not None:
-            tcal_1d = np.asarray(row["timecal_M1"], dtype=np.float32).ravel()
+            tcal_1d = center_timecal_per_pixel(
+                row["timecal_M1"],
+                n_pixels=n_pixels,
+                centering=real_timecal_centering,
+            )
+            single_tel_duration = real_timeslice_duration
         elif "timecal" in row.index and row.get("timecal") is not None:
+            # Legacy timecal export: unchanged (uncentered, unit-stride).
             tcal_1d = np.asarray(row["timecal"], dtype=np.float32).ravel()
+            single_tel_duration = 1.0
         else:
             tcal_1d = np.zeros(n_pixels, dtype=np.float32)
-        time_flat = _expand_timecal_1d(tcal_1d, n_timeslices)
+            single_tel_duration = 1.0
+        time_flat = _expand_timecal_1d(tcal_1d, n_timeslices, single_tel_duration)
         pv_tel: Optional[np.ndarray] = None
         if row.get("pixel_valid_M1") is not None:
             pv_tel = _broadcast_pixel_valid(
@@ -431,7 +530,13 @@ def clean_magic_event(
 
     elif wf.size == 2 * per_telescope:
         sig_tels = _split_stereo_waveforms(wf, n_pixels, n_timeslices)
-        time_tels = _time_for_stereo_row(row, n_pixels, n_timeslices)
+        time_tels = _time_for_stereo_row(
+            row,
+            n_pixels,
+            n_timeslices,
+            real_timecal_centering=real_timecal_centering,
+            real_timeslice_duration=real_timeslice_duration,
+        )
         pv_tels = _pixel_valid_stereo(row, n_pixels, n_timeslices)
         for tel_i in range(2):
             graft_tcal = (
@@ -474,4 +579,5 @@ def clean_magic_event(
         "event_id": event_id,
         "truth": truth,
         "global_params": globals_dict,
+        "timing_settings": timing_settings,
     }

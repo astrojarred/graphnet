@@ -15,7 +15,11 @@ from graphnet.data.extractors.magic import (
     load_or_build_default_px_py,
     log_size_clipped_from_row,
 )
-from graphnet.data.extractors.magic.calibration import TimecalLookup
+from graphnet.data.extractors.magic.calibration import (
+    VALID_TIMECAL_CENTERING,
+    TimecalLookup,
+)
+from graphnet.data.extractors.magic.cleaning import resolve_mc_graft_duration
 from .graphnet_file_reader import GraphNeTFileReader
 
 
@@ -58,6 +62,20 @@ class MAGICParquetReader(GraphNeTFileReader):
     column lists so optional or version-specific parquet fields can be absent
     without failing the whole file (missing names are skipped with a log
     warning).
+
+    Three orthogonal timing controls are threaded down into
+    :func:`~graphnet.data.extractors.magic.cleaning.clean_magic_event`:
+
+    - ``real_timecal_centering`` (``"none"`` | ``"per_telescope_mean"``, default
+      ``"none"``): timing origin of the real ``timecal_M1``/``timecal_M2`` path.
+    - ``real_timeslice_duration`` (default ``1.0``): sample stride (ns) on the
+      real path.
+    - ``mc_graft_timeslice_duration`` (default ``0.6``): sample stride (ns) for
+      MC timecal grafting. ``graft_timeslice_ns`` is a deprecated alias.
+
+    Defaults reproduce the legacy behavior exactly. The effective values are
+    exposed on the instance as ``self.timing_settings`` (a plain dict) so a
+    conversion manifest can record them.
     """
 
     _accepted_file_extensions = [".parquet"]
@@ -74,11 +92,14 @@ class MAGICParquetReader(GraphNeTFileReader):
         py: Optional[Any] = None,
         max_log_size_clipped: Optional[float] = 4.75,
         timecal_graft_lmdb: Optional[Union[str, Path]] = None,
-        graft_timeslice_ns: float = 0.6,
+        mc_graft_timeslice_duration: Optional[float] = None,
+        real_timecal_centering: str = "none",
+        real_timeslice_duration: float = 1.0,
         graft_log_interpolation: bool = False,
         graft_mod_shift: int = 0,
         graft_map_size_gb: float = 8.0,
         allow_missing_truth_global_columns: bool = False,
+        graft_timeslice_ns: Optional[float] = None,
     ) -> None:
         super().__init__(name=__name__, class_name=self.__class__.__name__)
         self._index_column = index_column
@@ -96,7 +117,25 @@ class MAGICParquetReader(GraphNeTFileReader):
         default_px, default_py = load_or_build_default_px_py()
         self._px = default_px if px is None else px
         self._py = default_py if py is None else py
-        self._graft_timeslice_ns = graft_timeslice_ns
+
+        # Orthogonal timing controls (see class docstring). ``graft_timeslice_ns``
+        # is a deprecated alias for ``mc_graft_timeslice_duration``.
+        if real_timecal_centering not in VALID_TIMECAL_CENTERING:
+            raise ValueError(
+                f"unknown real_timecal_centering {real_timecal_centering!r}; "
+                f"expected one of {VALID_TIMECAL_CENTERING}"
+            )
+        self._real_timecal_centering = real_timecal_centering
+        self._real_timeslice_duration = float(real_timeslice_duration)
+        self._mc_graft_timeslice_duration = resolve_mc_graft_duration(
+            mc_graft_timeslice_duration, graft_timeslice_ns
+        )
+        # Effective timing settings, exposed for a later conversion manifest.
+        self.timing_settings: Dict[str, Any] = {
+            "real_timecal_centering": self._real_timecal_centering,
+            "real_timeslice_duration": self._real_timeslice_duration,
+            "mc_graft_timeslice_duration": self._mc_graft_timeslice_duration,
+        }
         self._graft_log_interpolation = graft_log_interpolation
         self._graft_map_size_gb = graft_map_size_gb
         self._graft_mod_shift = graft_mod_shift
@@ -163,7 +202,9 @@ class MAGICParquetReader(GraphNeTFileReader):
                 global_params=self._global_params,
                 truth_columns=self._truth_columns,
                 graft_lookup=self._graft_lookup_lazy(),
-                graft_timeslice_ns=self._graft_timeslice_ns,
+                mc_graft_timeslice_duration=self._mc_graft_timeslice_duration,
+                real_timecal_centering=self._real_timecal_centering,
+                real_timeslice_duration=self._real_timeslice_duration,
                 graft_log_interpolation=self._graft_log_interpolation,
                 allow_missing_truth_global_columns=self._allow_missing_truth_global_columns,
             )

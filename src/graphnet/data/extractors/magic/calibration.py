@@ -21,8 +21,10 @@ import pyarrow.parquet as pq
 
 __all__ = [
     "TIMECAL_HEADER",
+    "VALID_TIMECAL_CENTERING",
     "TimecalLookup",
     "build_magic_timecal_lmdb",
+    "center_timecal_per_pixel",
     "decode_timecal_row",
     "encode_timecal_row",
     "expand_parquet_sources",
@@ -33,6 +35,57 @@ __all__ = [
 ]
 
 TIMECAL_HEADER = struct.Struct("<II")  # n_M1, n_M2 as uint32 (little-endian)
+
+# Allowed values for the ``*_timecal_centering`` origin control.
+VALID_TIMECAL_CENTERING = ("none", "per_telescope_mean")
+
+
+def center_timecal_per_pixel(
+    timecal_per_pixel: Any,
+    n_pixels: int | None = None,
+    centering: str = "per_telescope_mean",
+) -> np.ndarray:
+    """Validate and optionally mean-center per-telescope per-pixel timecal values.
+
+    This is the single shared timing-origin helper used by BOTH the real cleaning
+    path (:func:`graphnet.data.extractors.magic.cleaning._time_for_stereo_row`) and
+    the MC graft path (:func:`graft_mc_telescope_signal`) so the centering
+    arithmetic is provably identical between them.
+
+    The arithmetic mean is taken over ALL pixels (i.e. before any cleaning /
+    bad-pixel masking) and subtracted from every pixel.
+
+    Parameters
+    ----------
+    timecal_per_pixel
+        Per-pixel start-time offsets, shape ``(n_pixels,)``.
+    n_pixels
+        Expected pixel count. When given, a length mismatch raises ``ValueError``
+        (mirrors the ``tcal.size`` check historically used in the MC graft).
+    centering
+        ``"none"`` returns the validated values unchanged (the legacy real-path
+        behaviour); ``"per_telescope_mean"`` subtracts the arithmetic mean over
+        all pixels (the MC-graft / canonical behaviour).
+
+    Returns
+    -------
+    ``float32`` 1-D array, same length as the input.
+    """
+    tcal = np.asarray(timecal_per_pixel, dtype=np.float32).ravel()
+    if n_pixels is not None and tcal.size != n_pixels:
+        raise ValueError(
+            f"timecal_per_pixel has length {tcal.size}, expected {n_pixels}"
+        )
+    if not np.all(np.isfinite(tcal)):
+        raise ValueError("timecal_per_pixel contains non-finite values")
+    if centering == "none":
+        return tcal
+    if centering == "per_telescope_mean":
+        mean = float(np.mean(tcal))
+        return (tcal - np.float32(mean)).astype(np.float32, copy=False)
+    raise ValueError(
+        f"unknown centering {centering!r}; expected one of {VALID_TIMECAL_CENTERING}"
+    )
 
 
 def encode_timecal_row(m1: Any, m2: Any) -> bytes:
@@ -186,15 +239,14 @@ def graft_mc_telescope_signal(
     if sig.ndim != 2:
         raise ValueError("signal_2d must be 2-D")
     n_pix, n_ts = sig.shape
-    tcal = np.asarray(real_timecal_per_pixel, dtype=np.float32).ravel()
-    if tcal.size != n_pix:
-        raise ValueError(
-            f"real_timecal_per_pixel has length {tcal.size}, expected {n_pix}"
-        )
+    # The MC graft is always mean-centered (canonical origin); it shares the
+    # centering arithmetic with the real path via ``center_timecal_per_pixel``.
+    centered = center_timecal_per_pixel(
+        real_timecal_per_pixel, n_pixels=n_pix, centering="per_telescope_mean"
+    )
     time_offsets = (np.arange(n_ts, dtype=np.float32) * np.float32(timeslice_ns))
     base_time = np.broadcast_to(time_offsets, (n_pix, n_ts))
-    mean = float(np.mean(tcal))
-    shifted_time = (tcal[:, None] - np.float32(mean)) + time_offsets
+    shifted_time = centered[:, None] + time_offsets
     out = shift_signal_graft(
         sig, base_time, shifted_time, log_interpolation=log_interpolation
     )
