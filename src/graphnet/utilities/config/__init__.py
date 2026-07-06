@@ -13,4 +13,8 @@ from .model_config import (
     ModelConfigSaverABC,
     save_model_config,
 )
+from .graph_resolution import (
+    GraphCompatibilityError,
+    resolve_dataset_graph_from_model,
+)
 from .training_config import TrainingConfig
