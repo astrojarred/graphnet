@@ -14,6 +14,7 @@ from graphnet.data.extractors.magic import (
     clean_magic_event,
     load_or_build_default_px_py,
     log_size_clipped_from_row,
+    raise_if_source_reference_missing,
 )
 from graphnet.data.extractors.magic.calibration import (
     VALID_TIMECAL_CENTERING,
@@ -100,6 +101,8 @@ class MAGICParquetReader(GraphNeTFileReader):
         graft_map_size_gb: float = 8.0,
         allow_missing_truth_global_columns: bool = False,
         graft_timeslice_ns: Optional[float] = None,
+        is_mc: Optional[bool] = None,
+        allow_missing_source_reference: bool = False,
     ) -> None:
         super().__init__(name=__name__, class_name=self.__class__.__name__)
         self._index_column = index_column
@@ -113,6 +116,20 @@ class MAGICParquetReader(GraphNeTFileReader):
         self._truth_columns = (
             truth_columns if truth_columns is not None else DEFAULT_MC_TRUTH_COLUMNS
         )
+        # Whether this reader is configured for MC data. Used only to gate
+        # the real-data source-reference guard below (see
+        # ``allow_missing_source_reference``); it does not otherwise change
+        # reader behavior. When not given explicitly, conservatively defaults
+        # to MC (no guard) UNLESS a real-only marker column ("run_number",
+        # present in ``DEFAULT_MAGIC_REAL_TRUTH_COLUMNS`` but not in
+        # ``DEFAULT_MC_TRUTH_COLUMNS``) is among the configured truth columns
+        # -- this avoids false positives on ad hoc/minimal truth-column
+        # configurations (e.g. ``truth_columns=[]`` in unit tests unrelated
+        # to real-data source-reference handling).
+        self._is_mc = (
+            is_mc if is_mc is not None else ("run_number" not in self._truth_columns)
+        )
+        self._allow_missing_source_reference = allow_missing_source_reference
 
         default_px, default_py = load_or_build_default_px_py()
         self._px = default_px if px is None else px
@@ -185,6 +202,12 @@ class MAGICParquetReader(GraphNeTFileReader):
     ) -> List[OrderedDict[str, Dict[str, Any]]]:
         """Read one MAGIC parquet file and apply configured extractors."""
         df = pd.read_parquet(file_path)
+        if not self._is_mc:
+            raise_if_source_reference_missing(
+                df.columns,
+                allow_missing_source_reference=self._allow_missing_source_reference,
+                source_description=f"real-data parquet file {file_path!r}",
+            )
         outputs: List[OrderedDict[str, Dict[str, Any]]] = []
 
         for _, row in df.iterrows():
