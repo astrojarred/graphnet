@@ -50,6 +50,7 @@ class LMDBDataset(Dataset):
         # LMDB-specific parameters
         pre_computed_representation: Optional[str] = None,
         repeat_labels_by: Optional[int] = None,
+        required_manifest_settings: Optional[Dict[str, Any]] = None,
     ):
         """Construct `LMDBDataset`.
 
@@ -93,12 +94,15 @@ class LMDBDataset(Dataset):
                 pre-computed representation directly (by class name or key).
             repeat_labels_by: If specified, repeats the labels along the
                 specified dimension.
+            required_manifest_settings: If set, enforce these MAGIC conversion
+                manifest fields (e.g. timing settings) with ``strict=True``.
         """
         # Store LMDB-specific parameter before calling super().__init__
         self._pre_computed_representation = pre_computed_representation
         self._deserializer: Optional[Any] = None
         self._env: Optional[lmdb.Environment] = None
         self._repeat_labels_by = repeat_labels_by
+        self._required_manifest_settings = required_manifest_settings
         self._tables: Optional[List[str]] = None
         # Call parent constructor
         super().__init__(
@@ -121,6 +125,43 @@ class LMDBDataset(Dataset):
             seed=seed,
             labels=labels,
         )
+        self._check_magic_conversion_manifest()
+
+    def _check_magic_conversion_manifest(self) -> None:
+        """Log or enforce MAGIC conversion manifest next to the LMDB path."""
+        from graphnet.data.utilities.magic_manifest import (
+            check_manifest,
+            manifest_paths_for_dataset,
+        )
+
+        path = self._path
+        if isinstance(path, list):
+            if len(path) != 1:
+                return
+            path = path[0]
+        if not isinstance(path, str):
+            return
+
+        manifest_path = None
+        for candidate in manifest_paths_for_dataset(path):
+            if candidate.is_file():
+                manifest_path = candidate
+                break
+
+        if manifest_path is not None:
+            self.info(f"MAGIC conversion manifest: {manifest_path}")
+        else:
+            self.warning(
+                "MAGIC conversion manifest not found; "
+                "timing_provenance=unknown/legacy"
+            )
+
+        if self._required_manifest_settings is not None:
+            check_manifest(
+                path,
+                self._required_manifest_settings,
+                strict=True,
+            )
 
     # Implementing abstract method(s)
     def _init(self) -> None:

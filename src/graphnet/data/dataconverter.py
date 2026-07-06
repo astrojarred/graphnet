@@ -85,6 +85,7 @@ class DataConverter(ABC, Logger):
         self._index = 0
         self._output_dir = outdir
         self._output_files: List[str] = []
+        self._source_input_files: List[str] = []
         self._extension = self._save_method.file_extension
 
         # Set Extractors. Will throw error if extractors are incompatible
@@ -106,6 +107,7 @@ class DataConverter(ABC, Logger):
         # Get the file reader to produce a list of input files
         # in the directory
         input_files = self._file_reader.find_files(path=input_dir)
+        self._source_input_files = list(input_files)
         self._launch_jobs(input_files=input_files)
         self._output_files = [
             os.path.join(
@@ -114,6 +116,10 @@ class DataConverter(ABC, Logger):
             )
             for file in input_files
         ]
+        self._try_write_magic_conversion_manifest(
+            output_dir=self._output_dir,
+            sources=self._source_input_files,
+        )
 
     @final
     def _launch_jobs(
@@ -389,3 +395,44 @@ class DataConverter(ABC, Logger):
         self._save_method.merge_files(
             files=files_to_merge, output_dir=merge_path, **kwargs
         )
+        manifest_sources = (
+            self._source_input_files
+            if self._source_input_files
+            else files_to_merge
+        )
+        self._try_write_magic_conversion_manifest(
+            output_dir=merge_path,
+            sources=manifest_sources,
+        )
+
+    def _try_write_magic_conversion_manifest(
+        self,
+        output_dir: str,
+        sources: List[str],
+    ) -> None:
+        """Write MAGIC conversion manifest when reader/writer pair supports it."""
+        try:
+            from graphnet.data.readers.magic_parquet_reader import (
+                MAGICParquetReader,
+            )
+            from graphnet.data.writers.lmdb_writer import LMDBWriter
+            from graphnet.data.utilities.magic_manifest import (
+                write_conversion_manifest,
+            )
+
+            if not isinstance(self._file_reader, MAGICParquetReader):
+                return
+            if not isinstance(self._save_method, LMDBWriter):
+                return
+            write_conversion_manifest(
+                output_dir,
+                sources=sources,
+                reader=self._file_reader,
+            )
+            self.info(
+                f"Wrote MAGIC conversion manifest in {output_dir}"
+            )
+        except Exception as exc:
+            self.warning(
+                f"Failed to write MAGIC conversion manifest: {exc}"
+            )
