@@ -66,6 +66,71 @@ DEFAULT_GEOMETRY_PATH = Path(__file__).resolve().parent / "geometry.json"
 DEFAULT_N_PIXELS = 1039
 DEFAULT_N_TIMESLICES = 50
 
+TIMECAL_COLUMNS = ("timecal_M1", "timecal_M2")
+
+
+def _row_has_usable_timecal(
+    row: pd.Series, n_pixels: int, n_timeslices: int
+) -> bool:
+    """Return True when the row carries real or legacy timecal suitable for timing."""
+    if "timecal_M1" in row.index and row.get("timecal_M1") is not None:
+        return True
+    if "timecal" not in row.index or row.get("timecal") is None:
+        return False
+    tc = np.asarray(row["timecal"], dtype=np.float32).ravel()
+    supported = (
+        2 * n_timeslices * n_pixels,
+        2 * n_pixels,
+        n_pixels,
+    )
+    return tc.size in supported
+
+
+def _infer_is_mc(row: pd.Series, is_mc: Optional[bool]) -> bool:
+    if is_mc is not None:
+        return bool(is_mc)
+    run = row.get("run_number")
+    return not (run is not None and pd.notna(run))
+
+
+def _ensure_real_timecal_or_placeholder(
+    row: pd.Series,
+    *,
+    is_mc: bool,
+    allow_placeholder_real_time: bool,
+    graft_lookup: Optional[TimecalLookup],
+    n_pixels: int,
+    n_timeslices: int,
+    event_id: object,
+) -> None:
+    """Fail closed on real data without timecal unless explicitly overridden."""
+    if is_mc or graft_lookup is not None:
+        return
+    if _row_has_usable_timecal(row, n_pixels, n_timeslices):
+        return
+    run = row.get("run_number", "unknown")
+    missing = [
+        col
+        for col in TIMECAL_COLUMNS
+        if col not in row.index or row.get(col) is None
+    ]
+    if allow_placeholder_real_time:
+        _logger.warning(
+            "MAGIC clean_magic_event: real data event_id=%s run_number=%s lacks "
+            "usable timecal (missing %s); emitting placeholder times because "
+            "allow_placeholder_real_time=True",
+            event_id,
+            run,
+            missing,
+        )
+        return
+    raise ValueError(
+        f"Real MAGIC data event_id={event_id!r} run_number={run!r} requires timecal "
+        f"columns {list(TIMECAL_COLUMNS)} when timing is requested; missing: {missing}. "
+        "Pass allow_placeholder_real_time=True only for explicit compatibility."
+    )
+
+
 def threshold_cleaning(
     signal: np.ndarray,
     med: float = 0,
@@ -340,6 +405,8 @@ def clean_magic_event(
     graft_log_interpolation: bool = False,
     allow_missing_truth_global_columns: bool = False,
     graft_timeslice_ns: Optional[float] = None,
+    is_mc: Optional[bool] = None,
+    allow_placeholder_real_time: bool = False,
 ) -> Dict[str, Any]:
     """Convert one MAGIC parquet row into a cleaned event dictionary.
 
@@ -385,6 +452,7 @@ def clean_magic_event(
         "real_timeslice_duration": float(real_timeslice_duration),
         "mc_graft_timeslice_duration": float(mc_graft_duration),
         "grafting": graft_lookup is not None,
+        "allow_placeholder_real_time": bool(allow_placeholder_real_time),
     }
 
     n_pixels = int(row["n_pixels"]) if "n_pixels" in row.index and pd.notna(row.get("n_pixels")) else DEFAULT_N_PIXELS
@@ -441,6 +509,17 @@ def clean_magic_event(
     event_id: object = -1
     if index_column is not None and index_column in row:
         event_id = row[index_column]
+
+    row_is_mc = _infer_is_mc(row, is_mc)
+    _ensure_real_timecal_or_placeholder(
+        row,
+        is_mc=row_is_mc,
+        allow_placeholder_real_time=allow_placeholder_real_time,
+        graft_lookup=graft_lookup,
+        n_pixels=n_pixels,
+        n_timeslices=n_timeslices,
+        event_id=event_id,
+    )
 
     graft_packed: tuple[np.ndarray, np.ndarray] | None = None
     if graft_lookup is not None:

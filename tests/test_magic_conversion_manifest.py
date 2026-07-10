@@ -39,6 +39,7 @@ CANONICAL_TIMING = {
     "real_timecal_centering": "per_telescope_mean",
     "real_timeslice_duration": 1.25,
     "mc_graft_timeslice_duration": 0.6,
+    "allow_placeholder_real_time": False,
 }
 
 

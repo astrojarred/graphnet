@@ -103,6 +103,7 @@ class MAGICParquetReader(GraphNeTFileReader):
         graft_timeslice_ns: Optional[float] = None,
         is_mc: Optional[bool] = None,
         allow_missing_source_reference: bool = False,
+        allow_placeholder_real_time: bool = False,
     ) -> None:
         super().__init__(name=__name__, class_name=self.__class__.__name__)
         self._index_column = index_column
@@ -130,6 +131,7 @@ class MAGICParquetReader(GraphNeTFileReader):
             is_mc if is_mc is not None else ("run_number" not in self._truth_columns)
         )
         self._allow_missing_source_reference = allow_missing_source_reference
+        self._allow_placeholder_real_time = allow_placeholder_real_time
 
         default_px, default_py = load_or_build_default_px_py()
         self._px = default_px if px is None else px
@@ -152,6 +154,7 @@ class MAGICParquetReader(GraphNeTFileReader):
             "real_timecal_centering": self._real_timecal_centering,
             "real_timeslice_duration": self._real_timeslice_duration,
             "mc_graft_timeslice_duration": self._mc_graft_timeslice_duration,
+            "allow_placeholder_real_time": self._allow_placeholder_real_time,
         }
         self._graft_log_interpolation = graft_log_interpolation
         self._graft_map_size_gb = graft_map_size_gb
@@ -230,6 +233,8 @@ class MAGICParquetReader(GraphNeTFileReader):
                 real_timeslice_duration=self._real_timeslice_duration,
                 graft_log_interpolation=self._graft_log_interpolation,
                 allow_missing_truth_global_columns=self._allow_missing_truth_global_columns,
+                is_mc=self._is_mc,
+                allow_placeholder_real_time=self._allow_placeholder_real_time,
             )
             event_output: OrderedDict[str, Dict[str, Any]] = OrderedDict()
             for extractor in self._extractors:

@@ -381,6 +381,7 @@ def test_timing_settings_exposed() -> None:
         "real_timecal_centering": "per_telescope_mean",
         "real_timeslice_duration": 0.6,
         "mc_graft_timeslice_duration": 0.6,
+        "allow_placeholder_real_time": False,
     }
 
     t1, t2 = _make_tcal(23), _make_tcal(24)
@@ -390,4 +391,5 @@ def test_timing_settings_exposed() -> None:
         "real_timeslice_duration": 1.0,
         "mc_graft_timeslice_duration": 0.6,
         "grafting": False,
+        "allow_placeholder_real_time": False,
     }
